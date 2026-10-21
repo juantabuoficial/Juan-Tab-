@@ -1,3 +1,4 @@
+import { FIRESTORE_DATABASE_ID } from '../services/firebasePublicConfig';
 import React, { useState, useEffect } from 'react';
 import {
   Database,
@@ -92,6 +93,7 @@ export const ModalMigracionFirebase: React.FC<ModalMigracionFirebaseProps> = ({
       projectId: projectId.trim(),
       authDomain: `${projectId.trim()}.firebaseapp.com`,
       storageBucket: `${projectId.trim()}.appspot.com`,
+      databaseId: FIRESTORE_DATABASE_ID,
       appId: appId.trim()
     });
 
@@ -134,7 +136,7 @@ export const ModalMigracionFirebase: React.FC<ModalMigracionFirebaseProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
       <div className="w-full max-w-3xl max-h-[92vh] flex flex-col rounded-3xl bg-white border border-slate-200 shadow-2xl overflow-hidden animate-in zoom-in-95 duration-150">
-        
+
         {/* Cabecera */}
         <div className="p-4 sm:px-6 sm:py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-3 shrink-0">
           <div className="flex items-center gap-3">
@@ -167,7 +169,7 @@ export const ModalMigracionFirebase: React.FC<ModalMigracionFirebaseProps> = ({
 
         {/* Contenido con scroll */}
         <div className="p-4 sm:p-6 overflow-y-auto space-y-5 text-xs flex-1">
-          
+
           {/* Banner de Garantía de Protección de Datos */}
           <div className="p-4 rounded-2xl bg-emerald-50/70 border border-emerald-200 text-emerald-950 flex items-start gap-3 shadow-2xs">
             <ShieldCheck className="w-5 h-5 text-emerald-700 shrink-0 mt-0.5" />

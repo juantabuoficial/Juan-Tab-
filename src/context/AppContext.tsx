@@ -1,5 +1,11 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { leerDatosCompartidos } from '../services/sharedDataReadService';
+import React, { createContext, useContext, useState, useEffect, useMemo, ReactNode } from 'react';
+import { onAuthStateChanged } from 'firebase/auth';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { inicializarFirebase } from '../services/firebaseConfig';
+import { perfilAutorizado } from '../services/authProfile';
+import { ensureSystemNotifications } from '../services/workspaceFirestore';
+import { useSharedWorkspace } from '../hooks/useSharedWorkspace';
+import type { SyncState } from '../services/workspaceController';
 import {
   Actuacion,
   DocumentoActuacion,
@@ -19,10 +25,6 @@ import {
   CopiaSeguridadPlan
 } from '../types';
 import {
-  ACTUACIONES_INICIALES,
-  USUARIOS_INICIALES,
-  PLANES_INICIALES,
-  COMENTARIOS_INICIALES,
   PLANTILLA_DOCUMENTOS_SOLICITUD,
   generarChecklistPorDefecto,
   construirDocumentosCompletos
@@ -40,6 +42,7 @@ interface AppContextType {
   documentoActivoIndex: number;
   documentoActivo: DocumentoActuacion | null;
   usuarioActual: User | null;
+  errorAutenticacion: string;
   usuarios: User[];
   registrosAuditoria: RegistroAuditoriaAcceso[];
   notificaciones: NotificacionSistema[];
@@ -50,7 +53,13 @@ interface AppContextType {
   comentarios: ComentarioActuacion[];
 
   // Estados de interfaz y red
-  estadoSincronizacion: 'sincronizado' | 'guardando' | 'offline';
+  estadoSincronizacion: SyncState;
+  errorSincronizacion: string;
+  cambiosPendientes: number;
+  datosCompartidosListos: boolean;
+  esperarGuardado: () => Promise<void>;
+  guardarOperacion: <T>(fn: () => T) => Promise<T>;
+  conservarCopiaYRecargar: () => void;
   isOnline: boolean;
   alertaCamposIncompletos: {
     mostrar: boolean;
@@ -168,7 +177,7 @@ interface AppContextType {
   // Usuarios y roles
   cambiarUsuarioActivo: (usuarioId: string) => void;
   actualizarUsuario: (usuario: User) => void;
-  crearUsuario: (usuario: Omit<User, 'id'>) => void;
+  crearUsuario: (usuario: Omit<User, 'id'> & { firebaseUid: string }) => void;
 
   // Configuración y Notificaciones
   actualizarConfiguracion: (config: Partial<ConfiguracionUsuario>) => void;
@@ -220,290 +229,92 @@ const FILTROS_DEFECTO: FiltrosBusqueda = {
 
 const CONFIG_DEFECTO: ConfiguracionUsuario = {
   notificacionesPush: true,
-  recordatoriosEmailDiarios: true,
+  recordatoriosEmailDiarios: false,
   alertasVencimientoDias: 30,
   sincronizacionNubeAutomatica: true,
-  cifradoExtremoAExtremo: true,
+  cifradoExtremoAExtremo: false,
   modoOscuro: 'light',
-  autenticacionBiometrica: true,
-  autenticacion2FA: true
+  autenticacionBiometrica: false,
+  autenticacion2FA: false
 };
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
-export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  // 1. Cargar Usuarios
-  const [usuarios, setUsuarios] = useState<User[]>(() => {
-    try {
-      const guardado = localStorage.getItem(STORAGE_KEYS.USUARIOS);
-      if (guardado) {
-        const parsed: User[] = JSON.parse(guardado);
-        // Garantizar que el Jefe de Servicio es JUAN HINOJO GARCÍA
-        return parsed.map((u) => {
-          if (u.id === 'usr-jefe-1' || u.rol === 'jefe_servicio') {
-            return {
-              ...u,
-              nombre: 'Juan',
-              apellidos: 'Hinojo García',
-              email: 'juan.tabu.oficial@gmail.com'
-            };
-          }
-          return u;
-        });
-      }
-      return USUARIOS_INICIALES;
-    } catch {
-      return USUARIOS_INICIALES;
-    }
-  });
-
-  // 2. Usuario activo (autenticación automática garantizada: JUAN HINOJO GARCÍA - Jefe de Servicio)
-  const [usuarioActual, setUsuarioActual] = useState<User>(() => {
-    const jefeOficial: User = {
-      id: 'usr-jefe-1',
-      nombre: 'Juan',
-      apellidos: 'Hinojo García',
-      nif: '28765432Z',
-      email: 'juan.tabu.oficial@gmail.com',
-      rol: 'jefe_servicio',
-      departamento: 'Área de Desarrollo Local',
-      cargo: 'Jefe del Servicio de Asistencia Técnica y Obras',
-      telefono: '+34 956 240 100',
-      biometriaHabilitada: true,
-      dosFactoresHabilitado: true,
-      activo: true,
-      fechaAlta: '2024-01-10',
-      permisos: {
-        puedeEditarPlanes: true,
-        puedeAsignarTecnicos: true,
-        puedeCalificarDocumentos: true,
-        puedeExportarInformes: true,
-        puedeEnviarComentarios: true,
-        puedeGestionarUsuarios: true
-      },
-      ultimoAcceso: new Date().toISOString()
-    };
-
-    try {
-      const guardado = localStorage.getItem(STORAGE_KEYS.USUARIO_ACTUAL);
-      if (guardado) {
-        const u = JSON.parse(guardado);
-        if (u && (u.id === 'usr-jefe-1' || u.rol === 'jefe_servicio' || u.email?.includes('juan'))) {
-          return { ...u, ...jefeOficial };
-        }
-        if (u && u.id) return u;
-      }
-    } catch {}
-
-    try {
-      localStorage.setItem(STORAGE_KEYS.USUARIO_ACTUAL, JSON.stringify(jefeOficial));
-    } catch {}
-    return jefeOficial;
-  });
-
-  // 3. Actuaciones
-  const [actuaciones, setActuaciones] = useState<Actuacion[]>(() => {
-    try {
-      const guardado = localStorage.getItem(STORAGE_KEYS.ACTUACIONES);
-      if (guardado) {
-        const parsed: Actuacion[] = JSON.parse(guardado);
-        const mapeados: Actuacion[] = parsed.map((a, i) => {
-          let docs = a.documentos || [];
-          const tieneSolicitud = docs.some((d) => d.codigo === 'ANX-I');
-          if (!tieneSolicitud) {
-            const docsSolicitud = PLANTILLA_DOCUMENTOS_SOLICITUD.map((p, idx) => ({
-              ...p,
-              orden: idx + 1,
-              metadatos: {
-                importeInicial: null,
-                importeUltima: null,
-                fechaExpedicionInicial: '',
-                fechaExpedicionUltima: '',
-                fechaRegistroInicial: '',
-                fechaRegistroUltima: '',
-                fechaAprobacionInicial: '',
-                fechaAprobacionUltima: '',
-                fechaRegistroAprobacionInicial: '',
-                fechaRegistroAprobacionUltima: '',
-                estadoJustificacion: 'Pendiente de calificar' as const,
-                observacionesGenerales: ''
-              },
-              camposRevisar: generarChecklistPorDefecto(p.id, p.codigo),
-              revisadoCompleto: false,
-              tieneDeficiencias: false
-            }));
-            const docsBase14 = docs.map((d, idx) => ({
-              ...d,
-              orden: idx + 5,
-              fase: 'justificacion' as const
-            }));
-            docs = [...docsSolicitud, ...docsBase14];
-          }
-
-          // Asegurar que siempre exista la Pestaña Proyecto Técnico (PROY-OBRA)
-          const tieneProyecto = docs.some((d) => d.codigo === 'PROY-OBRA' || d.categoria === 'proyecto');
-          if (!tieneProyecto) {
-            const docProy: DocumentoActuacion = {
-              id: `doc-proy-auto-${a.id || i}`,
-              orden: 5,
-              codigo: 'PROY-OBRA',
-              titulo: 'Proyecto Técnico / Memoria Valorada de las Obras',
-              subtitulo: 'Memoria descriptiva y constructiva, planos acotados, pliego de prescripciones técnicas y presupuesto con mediciones',
-              categoria: 'proyecto',
-              fase: 'solicitud',
-              metadatos: {
-                importeInicial: null,
-                importeUltima: null,
-                fechaExpedicionInicial: '',
-                fechaExpedicionUltima: '',
-                fechaRegistroInicial: '',
-                fechaRegistroUltima: '',
-                fechaAprobacionInicial: '',
-                fechaAprobacionUltima: '',
-                fechaRegistroAprobacionInicial: '',
-                fechaRegistroAprobacionUltima: '',
-                estadoJustificacion: 'Pendiente de calificar' as const,
-                observacionesGenerales: ''
-              },
-              camposRevisar: generarChecklistPorDefecto(`doc-proy-auto-${a.id || i}`, 'PROY-OBRA'),
-              revisadoCompleto: false,
-              tieneDeficiencias: false
-            };
-            const idxAnx4 = docs.findIndex((d) => d.codigo === 'ANX-IV');
-            if (idxAnx4 !== -1) {
-              docs.splice(idxAnx4 + 1, 0, docProy);
-            } else {
-              docs.unshift(docProy);
-            }
-            docs = docs.map((d, dIdx) => ({ ...d, orden: dIdx + 1 }));
-          }
-
-          return {
-            ...a,
-            documentos: docs,
-            faseActual: a.faseActual || 'solicitud',
-            aplicacionPresupuestaria: a.aplicacionPresupuestaria || `202${4 + (i % 4)}-03-920-4620${i}`
-          };
-        });
-
-        // Garantizar que no existan IDs duplicados al cargar de LocalStorage
-        const idsVistos = new Set<string>();
-        return mapeados.map((act, idx) => {
-          let uId = act.id;
-          if (!uId || idsVistos.has(uId)) {
-            uId = `${uId || 'act'}-${idx + 1}`;
-          }
-          idsVistos.add(uId);
-          return { ...act, id: uId };
-        });
-      }
-      return [];
-    } catch {
-      return [];
-    }
-  });
-
-  // 4. Actuación seleccionada y pestaña de documento activa
-  const [actuacionActivaId, setActuacionActivaId] = useState<string | null>(null);
-  const [documentoActivoIndex, setDocumentoActivoIndex] = useState<number>(0);
-
-  // 5. Auditoría
-  const [registrosAuditoria, setRegistrosAuditoria] = useState<RegistroAuditoriaAcceso[]>(() => {
-    try {
-      const guardado = localStorage.getItem(STORAGE_KEYS.AUDITORIA);
-      return guardado ? JSON.parse(guardado) : [];
-    } catch {
-      return [];
-    }
-  });
-
-  // 6. Configuración
-  const [configuracion, setConfiguracion] = useState<ConfiguracionUsuario>(() => {
-    try {
-      const guardado = localStorage.getItem(STORAGE_KEYS.CONFIG);
-      if (guardado) {
-        const parsed = JSON.parse(guardado);
-        return { ...CONFIG_DEFECTO, ...parsed, modoOscuro: 'light' };
-      }
-      return CONFIG_DEFECTO;
-    } catch {
-      return CONFIG_DEFECTO;
-    }
-  });
-
-  // 7. Notificaciones
-  const [notificaciones, setNotificaciones] = useState<NotificacionSistema[]>(() => {
-    try {
-      const guardado = localStorage.getItem(STORAGE_KEYS.NOTIFICACIONES);
-      if (guardado) return JSON.parse(guardado);
-    } catch {}
-    return [];
-  });
-
-  // 8. Filtros
-  const [filtros, setFiltros] = useState<FiltrosBusqueda>(FILTROS_DEFECTO);
-
-  // 9. Planes de Subvenciones
-  const [planes, setPlanes] = useState<PlanSubvencion[]>(() => {
-    try {
-      const guardado = localStorage.getItem(STORAGE_KEYS.PLANES);
-      if (guardado) {
-        const parsed: PlanSubvencion[] = JSON.parse(guardado);
-        if (Array.isArray(parsed)) return parsed;
-      }
-      return [];
-    } catch {
-      return [];
-    }
-  });
-
-  // 9b. Papelera de Planes y Copias de Seguridad para recuperación (30 días de custodia)
-  const [planesPapelera, setPlanesPapelera] = useState<CopiaSeguridadPlan[]>(() => {
-    try {
-      const guardado = localStorage.getItem(STORAGE_KEYS.PLANES_PAPELERA);
-      if (guardado) {
-        const parsed: CopiaSeguridadPlan[] = JSON.parse(guardado);
-        if (Array.isArray(parsed)) {
-          const ahora = Date.now();
-          return parsed
-            .map((c) => ({
-              ...c,
-              diasRetencion: c.diasRetencion || 30,
-              fechaExpiracion:
-                c.fechaExpiracion ||
-                new Date(new Date(c.fechaBorrado).getTime() + (c.diasRetencion || 30) * 86400000).toISOString()
-            }))
-            .filter((c) => {
-              const exp = new Date(c.fechaExpiracion).getTime();
-              return exp > ahora;
-            });
-        }
-      }
-      return [];
-    } catch {
-      return [];
-    }
-  });
+export const AppProvider: React.FC<{ children: ReactNode; firebase?: ReturnType<typeof inicializarFirebase> }> = ({ children, firebase }) => {
+  const client = useMemo(() => firebase ?? inicializarFirebase(), [firebase]);
+  // La identidad local heredada no representa una sesión autenticada.
+  const [usuarioActual, setUsuarioActual] = useState<User | null>(null);
+  const [errorAutenticacion, setErrorAutenticacion] = useState('');
 
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEYS.PLANES_PAPELERA, JSON.stringify(planesPapelera));
-    } catch {}
-  }, [planesPapelera]);
-
-  // 10. Comentarios y Notificaciones por Correo a Técnicos
-  const [comentarios, setComentarios] = useState<ComentarioActuacion[]>(() => {
-    try {
-      const guardado = localStorage.getItem(STORAGE_KEYS.COMENTARIOS);
-      return guardado ? JSON.parse(guardado) : COMENTARIOS_INICIALES;
-    } catch {
-      return COMENTARIOS_INICIALES;
+    const { auth, db, status } = client;
+    if (!auth || !db) {
+      setErrorAutenticacion(status.error || 'Firebase no está configurado.');
+      return;
     }
-  });
+    let version = 0;
+    let closeProfile: (() => void) | undefined;
+    const cancelar = onAuthStateChanged(auth, identity => {
+      const actual = ++version;
+      closeProfile?.();
+      setUsuarioActual(null);
+      setErrorAutenticacion('');
+      if (!identity) return;
+      closeProfile = onSnapshot(doc(db, 'usuarios', identity.uid), { includeMetadataChanges: true }, perfil => {
+        if (actual !== version || auth.currentUser?.uid !== identity.uid) return;
+        // Un perfil en caché no concede acceso ni confirma una reactivación.
+        if (perfil.metadata.fromCache || perfil.metadata.hasPendingWrites) return;
+        try {
+          if (!perfil.exists()) throw new Error('Tu cuenta no tiene un perfil autorizado. Contacta con la administración.');
+          setUsuarioActual(perfilAutorizado(identity.uid, perfil.data()));
+          setErrorAutenticacion('');
+        } catch (error) {
+          setUsuarioActual(null);
+          setErrorAutenticacion(error instanceof Error ? error.message : 'No se pudo validar el acceso.');
+        }
+      }, error => {
+        if (actual !== version) return;
+        setUsuarioActual(null);
+        setErrorAutenticacion(error.message);
+      });
+    });
+    return () => { ++version; closeProfile?.(); cancelar(); };
+  }, [client]);
 
-  // 11. Estado de Red y Sincronización
-  const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true);
-  const [estadoSincronizacion, setEstadoSincronizacion] = useState<'sincronizado' | 'guardando' | 'offline'>('sincronizado');
+  const shared = useSharedWorkspace(usuarioActual, client);
+  const { planes, actuaciones, usuarios: perfilesPrivados, comentarios, notificaciones: notificacionesRemotas, papeleraPlanes: planesPapelera, auditoria: auditoriaActual } = shared.data;
+  // Mostrar el historial existente sin volver a escribirlo ni confiar en él como identidad.
+  const registrosAuditoria = [...auditoriaActual, ...shared.data.registrosAuditoria.map(r => ({ ...r, id: `heredado-${r.id}` }))];
+  const usuarios: User[] = usuarioActual?.rol === 'administrador' ? [...perfilesPrivados] : shared.data.directorioPersonal.map(p => ({
+    ...p, email: '', biometriaHabilitada: false, dosFactoresHabilitado: false,
+    ...(perfilesPrivados.find(privateProfile => privateProfile.id === p.id) || {})
+  }));
+  if (usuarioActual && !usuarios.some(u => u.id === usuarioActual.id)) usuarios.push(usuarioActual);
+  const setDirectorioPersonal = shared.set('directorioPersonal');
+  const perfilDirectorio = (u: User) => ({ id: u.id, nombre: u.nombre, apellidos: u.apellidos, cargo: u.cargo, departamento: u.departamento, rol: u.rol, activo: u.activo ?? true });
+  const setPlanes = shared.set('planes');
+  const setActuaciones = shared.set('actuaciones');
+  const setUsuarios = shared.set('usuarios');
+  const setComentarios = shared.set('comentarios');
+  const setNotificaciones = shared.set('notificaciones');
+  const setPlanesPapelera = shared.set('papeleraPlanes');
+  const setRegistrosAuditoria = shared.set('auditoria');
+  const configuracion: ConfiguracionUsuario = { ...CONFIG_DEFECTO, ...shared.data.configuracionesUsuario[0] };
+  const notificaciones = useMemo(() => {
+    const leidas = new Set(configuracion.notificacionesLeidas || []);
+    return notificacionesRemotas.map(n => ({ ...n, leida: leidas.has(n.id) }));
+  }, [notificacionesRemotas, configuracion.notificacionesLeidas]);
+  const setConfiguracion = (action: ConfiguracionUsuario | ((prev: ConfiguracionUsuario) => ConfiguracionUsuario)) => {
+    if (!usuarioActual) return;
+    const next = typeof action === 'function' ? action(configuracion) : action;
+    shared.set('configuracionesUsuario')([{ ...next, id: usuarioActual.id }]);
+  };
+  const [actuacionActivaId, setActuacionActivaId] = useState<string | null>(null);
+  const [documentoActivoIndex, setDocumentoActivoIndex] = useState(0);
+  const [filtros, setFiltros] = useState<FiltrosBusqueda>(FILTROS_DEFECTO);
+  const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
+  const estadoSincronizacion = shared.state;
+  const [errorAvisos, setErrorAvisos] = useState('');
 
   // 12. Alerta de bloqueo por campos sin revisar
   const [alertaCamposIncompletos, setAlertaCamposIncompletos] = useState<{
@@ -522,12 +333,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   useEffect(() => {
     const handleOnline = () => {
       setIsOnline(true);
-      setEstadoSincronizacion('guardando');
-      setTimeout(() => setEstadoSincronizacion('sincronizado'), 800);
     };
     const handleOffline = () => {
       setIsOnline(false);
-      setEstadoSincronizacion('offline');
     };
 
     window.addEventListener('online', handleOnline);
@@ -549,64 +357,25 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   }, [configuracion.modoOscuro]);
 
-  // Persistencia automática en LocalStorage
-  useEffect(() => {
-    setEstadoSincronizacion('guardando');
-    try {
-      localStorage.setItem(STORAGE_KEYS.ACTUACIONES, JSON.stringify(actuaciones));
-    } catch (e) {
-      console.error('Error guardando actuaciones en storage:', e);
-    }
-    const timer = setTimeout(() => {
-      setEstadoSincronizacion(isOnline ? 'sincronizado' : 'offline');
-    }, 400);
-    return () => clearTimeout(timer);
-  }, [actuaciones, isOnline]);
+  // Las claves locales heredadas permanecen intactas para exportación y conciliación.
+  // El estado visible procede exclusivamente de Firestore y del borrador del UID actual.
 
+  // Conservar las alertas de vencimiento como registros reales e idempotentes.
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.USUARIOS, JSON.stringify(usuarios));
-  }, [usuarios]);
-
-  useEffect(() => {
-    if (usuarioActual) {
-      localStorage.setItem(STORAGE_KEYS.USUARIO_ACTUAL, JSON.stringify(usuarioActual));
-    }
-  }, [usuarioActual]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.AUDITORIA, JSON.stringify(registrosAuditoria));
-  }, [registrosAuditoria]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.CONFIG, JSON.stringify(configuracion));
-  }, [configuracion]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.NOTIFICACIONES, JSON.stringify(notificaciones));
-  }, [notificaciones]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.PLANES, JSON.stringify(planes));
-  }, [planes]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.COMENTARIOS, JSON.stringify(comentarios));
-  }, [comentarios]);
-
-  // Chequeo periódico de vencimientos y generación de alertas
-  useEffect(() => {
-    const alertas = verificarAlertasVencimientos(actuaciones, configuracion.alertasVencimientoDias);
-    setNotificaciones((prev) => {
-      const idsExistentes = new Set(prev.map(p => p.id));
-      const nuevas = alertas.filter(a => !idsExistentes.has(a.id));
-      if (nuevas.length > 0 && configuracion.notificacionesPush) {
-        nuevas.slice(0, 2).forEach(n => {
-          enviarNotificacionPushNativa(n.titulo, { body: n.mensaje });
-        });
-      }
-      return [...nuevas, ...prev];
-    });
-  }, [actuaciones, configuracion.alertasVencimientoDias, configuracion.notificacionesPush]);
+    if (!shared.ready || !usuarioActual || !['administrador','jefe_servicio','tecnico','administrativo'].includes(usuarioActual.rol)) return;
+    const { db, auth } = client;
+    if (!db || !auth) return;
+    const ids = new Set(notificaciones.map(n => n.id));
+    const notes = verificarAlertasVencimientos(actuaciones, configuracion.alertasVencimientoDias).filter(n => !ids.has(n.id));
+    if (!notes.length) return;
+    let closed = false;
+    void ensureSystemNotifications(db, auth, usuarioActual.id, notes).then(created => {
+      if (closed) return;
+      setErrorAvisos('');
+      if (configuracion.notificacionesPush) created.slice(0,2).forEach(n => enviarNotificacionPushNativa(n.titulo,{ body: n.mensaje }));
+    }).catch(() => { if (!closed) setErrorAvisos('No se han podido actualizar los avisos de vencimiento. Los expedientes conservan su estado de guardado.'); });
+    return () => { closed = true; };
+  }, [shared.ready, usuarioActual?.id, usuarioActual?.rol, actuaciones, notificaciones, configuracion.alertasVencimientoDias, configuracion.notificacionesPush, client]);
 
   // Obtener actuación activa
   const actuacionActiva = actuaciones.find((a) => a.id === actuacionActivaId) || null;
@@ -619,7 +388,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     docTitulo?: string,
     detalles?: string
   ) => {
-    if (!usuarioActual || !actuacionActiva) return;
+    if (!usuarioActual) return;
 
     const nuevoRegistro: RegistroAuditoriaAcceso = {
       id: `aud-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
@@ -627,13 +396,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       usuarioId: usuarioActual.id,
       usuarioNombre: `${usuarioActual.nombre} ${usuarioActual.apellidos}`,
       rol: usuarioActual.rol,
-      actuacionId: actuacionActiva.id,
+      actuacionId: actuacionActiva?.id || docId || 'general',
       documentoId: docId || (documentoActivo ? documentoActivo.id : 'general'),
       documentoTitulo: docTitulo || (documentoActivo ? documentoActivo.titulo : 'Actuación General'),
       accion,
       detalles: detalles || undefined,
       dispositivo: `${navigator.platform} · ${navigator.userAgent.includes('Mobile') ? 'Móvil' : 'Escritorio'}`,
-      ip: '192.168.10.45 (Red Corporativa DipuCádiz)'
+      ip: undefined
     };
 
     setRegistrosAuditoria((prev) => [nuevoRegistro, ...prev]);
@@ -662,7 +431,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           }
           if (!act) {
             const eellNombre = limpiarNombreEELL(prevista.entidadLocal) || 'Diputación de Cádiz';
-            const nuevaActId = `ACT-${p.ejercicio}-${String(actuaciones.length + 1).padStart(3, '0')}`;
+            const nuevaActId = `ACT-${crypto.randomUUID()}`;
             const nuevaAct: Actuacion = {
               id: nuevaActId,
               numero: prevista.numero,
@@ -692,8 +461,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                 observacionesLiquidacion: `Actuación dada de alta desde el ${p.nombre}.`
               },
               estadoGeneral: 'pendiente',
-              tecnicoAsignadoId: usuarioActual?.id || 'usr-tec-1',
-              tecnicoAsignadoNombre: usuarioActual ? `${usuarioActual.nombre} ${usuarioActual.apellidos}` : 'Carmen Rivas Delgado',
+              tecnicoAsignadoId: usuarioActual?.id || '',
+              tecnicoAsignadoNombre: usuarioActual ? `${usuarioActual.nombre} ${usuarioActual.apellidos}` : '',
               fechaCreacion: new Date().toISOString(),
               fechaModificacion: new Date().toISOString()
             };
@@ -770,7 +539,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (nuevoIndex < 0 || nuevoIndex >= actuacionActiva.documentos.length) return false;
 
     const docActual = actuacionActiva.documentos[documentoActivoIndex];
-    
+
     // Si no es un salto forzado, comprobar si hay campos requeridos sin calificar ('sin_revisar')
     if (!forzar && docActual && !docActual.noProcede) {
       const camposSinRevisar = docActual.camposRevisar.filter(
@@ -1724,7 +1493,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // Crear nueva actuación
   const crearNuevaActuacion = (datos: Partial<Actuacion>): Actuacion => {
-    const id = `ACT-2026-${String(actuaciones.length + 1).padStart(3, '0')}`;
+    const id = `ACT-${crypto.randomUUID()}`;
     const nueva: Actuacion = {
       id,
       numero: datos.numero || String(actuaciones.length + 1).padStart(2, '0'),
@@ -1754,8 +1523,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         observacionesLiquidacion: 'Actuación recién registrada en la plataforma.'
       },
       estadoGeneral: 'pendiente',
-      tecnicoAsignadoId: usuarioActual?.id || 'usr-tec-1',
-      tecnicoAsignadoNombre: usuarioActual ? `${usuarioActual.nombre} ${usuarioActual.apellidos}` : 'Carmen Rivas Delgado',
+      tecnicoAsignadoId: usuarioActual?.id || '',
+      tecnicoAsignadoNombre: usuarioActual ? `${usuarioActual.nombre} ${usuarioActual.apellidos}` : '',
       fechaCreacion: new Date().toISOString(),
       fechaModificacion: new Date().toISOString(),
       ...datos
@@ -1789,7 +1558,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // Gestión de Planes de Subvenciones
   const crearPlan = (datos: Omit<PlanSubvencion, 'id' | 'fechaCreacion'>): PlanSubvencion => {
-    const nuevoId = `plan-${Date.now()}`;
+    const nuevoId = `plan-${crypto.randomUUID()}`;
     const nuevo: PlanSubvencion = {
       ...datos,
       id: nuevoId,
@@ -1951,7 +1720,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       );
       if (yaExiste) return prevista;
 
-      const actId = `ACT-${plan.ejercicio}-${String(actuaciones.length + creadas + 1).padStart(3, '0')}`;
+      const actId = `ACT-${crypto.randomUUID()}`;
       const nueva: Actuacion = {
         id: actId,
         numero: prevista.numero,
@@ -1981,8 +1750,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           observacionesLiquidacion: `Actuación generada automáticamente desde el ${plan.nombre}.`
         },
         estadoGeneral: 'pendiente',
-        tecnicoAsignadoId: 'usr-tec-1',
-        tecnicoAsignadoNombre: 'Carmen Rivas Delgado',
+        tecnicoAsignadoId: usuarioActual?.id || '',
+        tecnicoAsignadoNombre: '',
         fechaCreacion: new Date().toISOString(),
         fechaModificacion: new Date().toISOString()
       };
@@ -2029,7 +1798,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const nuevasPrevistas: ActuacionEnPlan[] = [...(plan.actuacionesPrevistas || [])];
 
     actuacionesParsed.forEach((parsedItem, idx) => {
-      const actId = `ACT-${plan.ejercicio}-${String(actuaciones.length + idx + 1).padStart(3, '0')}`;
+      const actId = `ACT-${crypto.randomUUID()}`;
       const numFormatted = parsedItem.numero || String(nuevasPrevistas.length + 1).padStart(2, '0');
 
       const nuevaAct: Actuacion = {
@@ -2061,8 +1830,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           observacionesLiquidacion: `Actuación reconocida e importada desde documento oficial PDF del ${plan.nombre}. Aplicación Presupuestaria: ${parsedItem.aplicacionPresupuestaria}.`
         },
         estadoGeneral: 'pendiente',
-        tecnicoAsignadoId: usuarioActual?.id || 'usr-tec-1',
-        tecnicoAsignadoNombre: usuarioActual ? `${usuarioActual.nombre} ${usuarioActual.apellidos}` : 'Carmen Rivas Delgado',
+        tecnicoAsignadoId: usuarioActual?.id || '',
+        tecnicoAsignadoNombre: usuarioActual ? `${usuarioActual.nombre} ${usuarioActual.apellidos}` : '',
         fechaCreacion: new Date().toISOString(),
         fechaModificacion: new Date().toISOString()
       };
@@ -2143,7 +1912,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const plan = planes.find((p) => p.id === planId);
     const nombrePlan = plan ? plan.nombre : 'Plan Provincial';
     const ejercicio = plan ? plan.ejercicio : 2026;
-    const actId = `ACT-${ejercicio}-${String(actuaciones.length + 1).padStart(3, '0')}`;
+    const actId = `ACT-${crypto.randomUUID()}`;
 
     const nuevaAct: Actuacion = {
       id: actId,
@@ -2175,8 +1944,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         observacionesLiquidacion: `Actuación dada de alta en fase de solicitud para ${nombrePlan}. Aplicación: ${datos.aplicacionPresupuestaria}.`
       },
       estadoGeneral: 'pendiente',
-      tecnicoAsignadoId: usuarioActual?.id || 'usr-tec-1',
-      tecnicoAsignadoNombre: usuarioActual ? `${usuarioActual.nombre} ${usuarioActual.apellidos}` : 'Carmen Rivas Delgado',
+      tecnicoAsignadoId: usuarioActual?.id || '',
+      tecnicoAsignadoNombre: usuarioActual ? `${usuarioActual.nombre} ${usuarioActual.apellidos}` : '',
       fechaCreacion: new Date().toISOString(),
       fechaModificacion: new Date().toISOString()
     };
@@ -2185,7 +1954,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     if (plan) {
       const nuevaPrevista: ActuacionEnPlan = {
-        id: `act-manual-${Date.now()}`,
+        id: `act-manual-${crypto.randomUUID()}`,
         numero: nuevaAct.numero,
         entidadLocal: datos.entidadLocal,
         titulo: datos.titulo,
@@ -2428,7 +2197,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           ];
 
     listaFinalActuaciones.forEach((parsedItem, idx) => {
-      const actId = `ACT-${ejercicio}-${String(actuaciones.length + idx + 1).padStart(3, '0')}`;
+      const actId = `ACT-${crypto.randomUUID()}`;
       const numRaw = parsedItem.numero || String(idx + 1).padStart(2, '0');
       const numFormatted = numRaw.replace(/^N[ºo°\.\s]*/i, '').trim();
       const rawEell = (parsedItem.entidadLocal || 'Diputación de Cádiz').trim();
@@ -2464,8 +2233,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           observacionesLiquidacion: `Actuación reconocida e importada desde documento oficial PDF del ${nombre}. Aplicación Presupuestaria: ${parsedItem.aplicacionPresupuestaria || `${ejercicio}-03-920-${46200 + idx}`}.`
         },
         estadoGeneral: 'pendiente',
-        tecnicoAsignadoId: usuarioActual?.id || 'usr-tec-1',
-        tecnicoAsignadoNombre: usuarioActual ? `${usuarioActual.nombre} ${usuarioActual.apellidos}` : 'Carmen Rivas Delgado',
+        tecnicoAsignadoId: usuarioActual?.id || '',
+        tecnicoAsignadoNombre: usuarioActual ? `${usuarioActual.nombre} ${usuarioActual.apellidos}` : '',
         fechaCreacion: new Date().toISOString(),
         fechaModificacion: new Date().toISOString()
       };
@@ -2535,14 +2304,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     actuacionId: string,
     destinatarioId: string,
     mensaje: string,
-    enviarEmail: boolean = true
+    enviarEmail: boolean = false
   ): Promise<ComentarioActuacion> => {
+    const nuevoComentario = shared.protect(() => {
     const act = actuaciones.find((a) => a.id === actuacionId);
     const dest = usuarios.find((u) => u.id === destinatarioId);
-    const autor = usuarioActual || usuarios[0];
+    const autor = usuarioActual;
+    if (!autor || !dest) throw new Error('Selecciona un destinatario autorizado antes de registrar el comentario.');
 
     const nuevoComentario: ComentarioActuacion = {
-      id: `com-${Date.now()}`,
+      id: `com-${crypto.randomUUID()}`,
       actuacionId,
       actuacionNumero: act ? act.numero : '---',
       actuacionTitulo: act ? act.titulo : 'Actuación',
@@ -2554,8 +2325,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       destinatarioEmail: dest ? dest.email : 'tecnico@dipucadiz.es',
       mensaje,
       fechaHora: new Date().toISOString(),
-      enviadoPorEmail: enviarEmail,
-      emailSimuladoEstado: enviarEmail ? 'entregado' : undefined,
+      enviadoPorEmail: false,
+      emailSimuladoEstado: undefined,
       leido: false
     };
 
@@ -2563,9 +2334,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     // Añadir notificación en sistema
     const nuevaNotif: NotificacionSistema = {
-      id: `notif-${Date.now()}`,
+      id: `notif-${crypto.randomUUID()}`,
       titulo: `Mensaje del Jefe de Servicio (Actuación Nº ${act ? act.numero : ''})`,
-      mensaje: `${autor.nombre}: "${mensaje.substring(0, 80)}${mensaje.length > 80 ? '...' : ''}"`,
+      mensaje: 'Hay un nuevo comentario para el personal destinatario en esta actuación.',
       tipo: 'info',
       fechaHora: new Date().toISOString(),
       leida: false,
@@ -2578,9 +2349,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       'calificacion_estado',
       actuacionId,
       act ? act.titulo : 'Actuación',
-      `Comentario remitido a ${dest?.nombre || 'técnico'}${enviarEmail ? ` [Email enviado a ${dest?.email}]` : ''}: "${mensaje.substring(0, 60)}..."`
+      `Comentario remitido a ${dest?.nombre || 'técnico'}${enviarEmail ? ' [Correo pendiente de envío externo]' : ''}: "${mensaje.substring(0, 60)}..."`
     );
 
+    return nuevoComentario;
+    })();
+    await shared.wait();
     return nuevoComentario;
   };
 
@@ -2612,26 +2386,22 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   // Usuarios
-  const cambiarUsuarioActivo = (usuarioId: string) => {
-    const usr = usuarios.find((u) => u.id === usuarioId);
-    if (usr) {
-      setUsuarioActual(usr);
-    }
+  const cambiarUsuarioActivo = (_usuarioId: string) => {
+    // Cambiar una selección de UI nunca puede cambiar la identidad autenticada.
+    setErrorAutenticacion('Para cambiar de identidad, cierra sesión y accede con la otra cuenta.');
   };
 
   const actualizarUsuario = (usuario: User) => {
     setUsuarios((prev) => prev.map((u) => (u.id === usuario.id ? usuario : u)));
-    if (usuarioActual?.id === usuario.id) {
-      setUsuarioActual(usuario);
-    }
+    setDirectorioPersonal(prev => [...prev.filter(p => p.id !== usuario.id), perfilDirectorio(usuario)]);
+    // El perfil activo solo se obtiene del servidor, nunca del formulario local.
   };
 
-  const crearUsuario = (datos: Omit<User, 'id'>) => {
-    const nuevoUsuario: User = {
-      ...datos,
-      id: `usr-${Date.now()}`
-    };
+  const crearUsuario = (datos: Omit<User, 'id'> & { firebaseUid: string }) => {
+    const { firebaseUid, ...perfil } = datos;
+    const nuevoUsuario: User = { ...perfil, id: firebaseUid.trim() };
     setUsuarios((prev) => [...prev, nuevoUsuario]);
+    setDirectorioPersonal(prev => [...prev, perfilDirectorio(nuevoUsuario)]);
   };
 
   // Configuración
@@ -2641,69 +2411,23 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // Notificaciones
   const marcarNotificacionLeida = (id: string) => {
-    setNotificaciones((prev) =>
-      prev.map((n) => (n.id === id ? { ...n, leida: true } : n))
-    );
+    actualizarConfiguracion({ notificacionesLeidas: [...new Set([...(configuracion.notificacionesLeidas || []), id])].slice(-5000) });
   };
 
   const limpiarTodasNotificaciones = () => {
-    setNotificaciones([]);
+    actualizarConfiguracion({ notificacionesLeidas: [...new Set([...(configuracion.notificacionesLeidas || []), ...notificaciones.map(n => n.id)])].slice(-5000) });
   };
 
-  // Lectura manual real: nunca subir automáticamente datos locales a Firestore.
-  // El estado de sincronización solo se confirma tras consultar ambas colecciones.
-  const forzarSincronizacion = async () => {
-    setEstadoSincronizacion('guardando');
-    try {
-      const resultado = await leerDatosCompartidos();
-      if (!resultado.ok) {
-        console.warn('[PLANIFICA] No se pudo consultar Firestore:', resultado.motivo);
-        setEstadoSincronizacion('offline');
-        return;
-      }
-
-      // Proteger cualquier trabajo local antes de reemplazar el estado visible.
-      // El respaldo incluye incluso valores iniciales o aún no clasificados.
-      const claveRespaldo = 'adl_cadiz_respaldo_prelectura_firestore_v2';
-      if (localStorage.getItem(claveRespaldo) === null) {
-        localStorage.setItem(claveRespaldo, JSON.stringify({
-          fecha: new Date().toISOString(),
-          planes,
-          actuaciones
-        }));
-      }
-
-      // Una base vacía NO debe hacer desaparecer las fichas locales.
-      if (resultado.planes.length === 0 && resultado.actuaciones.length === 0) {
-        console.info('[PLANIFICA] Firestore vacío: se conserva el estado local.');
-        setEstadoSincronizacion('offline');
-        return;
-      }
-      // No mezclar orígenes ni sobrescribir automáticamente registros locales.
-      // La conciliación de datos queda pendiente de un flujo explícito de migración.
-      console.info('[PLANIFICA] Consulta remota validada:', {
-        planes: resultado.planes.length,
-        actuaciones: resultado.actuaciones.length
-      });
-      setEstadoSincronizacion('offline');
-    } catch (error) {
-      console.error('[PLANIFICA] Error consultando Firestore:', error);
-      setEstadoSincronizacion('offline');
-    }
+  const forzarSincronizacion = async () => { shared.retry(); await shared.wait(); };
+  const conservarCopiaYRecargar = () => {
+    const copy = JSON.stringify({ fecha: new Date().toISOString(), usuarioId: usuarioActual?.id, datos: shared.data }, null, 2);
+    // No descartar ediciones si no se ha podido conservar la copia completa.
+    localStorage.setItem(`planifica_conflicto_${usuarioActual?.id}_${Date.now()}`, copy);
+    shared.discard();
   };
-
-  // Reiniciar datos de fábrica
   const reiniciarDatosFabrica = () => {
-    localStorage.removeItem(STORAGE_KEYS.ACTUACIONES);
-    localStorage.removeItem(STORAGE_KEYS.AUDITORIA);
-    localStorage.removeItem(STORAGE_KEYS.PLANES);
-    localStorage.removeItem(STORAGE_KEYS.COMENTARIOS);
-    localStorage.removeItem(STORAGE_KEYS.NOTIFICACIONES);
-    setActuaciones([]);
-    setPlanes([]);
-    setComentarios([]);
-    setNotificaciones([]);
-    setRegistrosAuditoria([]);
+    // Un reinicio local nunca debe convertirse en un borrado masivo de Firestore.
+    conservarCopiaYRecargar();
     setActuacionActivaId(null);
   };
 
@@ -2715,6 +2439,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         documentoActivoIndex,
         documentoActivo,
         usuarioActual,
+        errorAutenticacion,
         usuarios,
         registrosAuditoria,
         notificaciones,
@@ -2723,57 +2448,63 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         planes,
         comentarios,
         estadoSincronizacion,
+        errorSincronizacion: shared.error || errorAvisos,
+        cambiosPendientes: shared.pending,
+        datosCompartidosListos: shared.ready,
+        esperarGuardado: shared.wait,
+        guardarOperacion: async <T,>(fn: () => T): Promise<T> => { const result = shared.protect(fn)(); await shared.wait(); return result; },
+        conservarCopiaYRecargar,
         isOnline,
         alertaCamposIncompletos,
-        seleccionarActuacion,
-        cambiarDocumentoPestana,
+        seleccionarActuacion: shared.protect(seleccionarActuacion),
+        cambiarDocumentoPestana: shared.protect(cambiarDocumentoPestana),
         cerrarAlertaCampos,
-        confirmarSaltoForzado,
-        actualizarEstadoCampo,
-        actualizarMetadatosDocumento,
-        actualizarLiquidacion,
-        actualizarActuacionCabecera,
-        marcarDocumentoRevisado,
-        marcarDocumentoNoProcede,
-        marcarDocumentoNoProcedePorIndex,
-        autovalidarTodoConformeDocumento,
-        autovalidarTodoConformePorIndex,
-        autovalidarTodaActuacion,
-        agregarCertificacionAActuacion,
-        agregarFacturaAActuacion,
-        agregarModificadoProyecto,
-        eliminarDocumentoDeActuacion,
-        guardarRondaSubsanacion,
-        firmarInformeFavorable,
-        crearNuevaActuacion,
-        actualizarActuacion,
-        eliminarActuacion,
-        asignarTecnicoActuacion,
-        crearPlan,
-        actualizarPlan,
-        eliminarPlan,
+        confirmarSaltoForzado: shared.protect(confirmarSaltoForzado),
+        actualizarEstadoCampo: shared.protect(actualizarEstadoCampo),
+        actualizarMetadatosDocumento: shared.protect(actualizarMetadatosDocumento),
+        actualizarLiquidacion: shared.protect(actualizarLiquidacion),
+        actualizarActuacionCabecera: shared.protect(actualizarActuacionCabecera),
+        marcarDocumentoRevisado: shared.protect(marcarDocumentoRevisado),
+        marcarDocumentoNoProcede: shared.protect(marcarDocumentoNoProcede),
+        marcarDocumentoNoProcedePorIndex: shared.protect(marcarDocumentoNoProcedePorIndex),
+        autovalidarTodoConformeDocumento: shared.protect(autovalidarTodoConformeDocumento),
+        autovalidarTodoConformePorIndex: shared.protect(autovalidarTodoConformePorIndex),
+        autovalidarTodaActuacion: shared.protect(autovalidarTodaActuacion),
+        agregarCertificacionAActuacion: shared.protect(agregarCertificacionAActuacion),
+        agregarFacturaAActuacion: shared.protect(agregarFacturaAActuacion),
+        agregarModificadoProyecto: shared.protect(agregarModificadoProyecto),
+        eliminarDocumentoDeActuacion: shared.protect(eliminarDocumentoDeActuacion),
+        guardarRondaSubsanacion: shared.protect(guardarRondaSubsanacion),
+        firmarInformeFavorable: shared.protect(firmarInformeFavorable),
+        crearNuevaActuacion: shared.protect(crearNuevaActuacion),
+        actualizarActuacion: shared.protect(actualizarActuacion),
+        eliminarActuacion: shared.protect(eliminarActuacion),
+        asignarTecnicoActuacion: shared.protect(asignarTecnicoActuacion),
+        crearPlan: shared.protect(crearPlan),
+        actualizarPlan: shared.protect(actualizarPlan),
+        eliminarPlan: shared.protect(eliminarPlan),
         planesPapelera,
-        restaurarPlan,
-        eliminarCopiaDefinitiva,
-        vaciarPapeleraPlanes,
-        purgarPlanesExpirados,
-        generarActuacionesDesdePlan,
-        agregarActuacionAlPlan,
-        editarActuacionDePlan,
-        eliminarActuacionDePlan,
-        importarActuacionesPDFAlPlan,
-        importarPlanCompletoDesdeBasesPDF,
+        restaurarPlan: shared.protect(restaurarPlan),
+        eliminarCopiaDefinitiva: shared.protect(eliminarCopiaDefinitiva),
+        vaciarPapeleraPlanes: shared.protect(vaciarPapeleraPlanes),
+        purgarPlanesExpirados: shared.protect(purgarPlanesExpirados),
+        generarActuacionesDesdePlan: shared.protect(generarActuacionesDesdePlan),
+        agregarActuacionAlPlan: shared.protect(agregarActuacionAlPlan),
+        editarActuacionDePlan: shared.protect(editarActuacionDePlan),
+        eliminarActuacionDePlan: shared.protect(eliminarActuacionDePlan),
+        importarActuacionesPDFAlPlan: shared.protect(importarActuacionesPDFAlPlan),
+        importarPlanCompletoDesdeBasesPDF: shared.protect(importarPlanCompletoDesdeBasesPDF),
         enviarComentarioActuacion,
-        marcarComentarioLeido,
+        marcarComentarioLeido: shared.protect(marcarComentarioLeido),
         setFiltros,
         limpiarFiltros,
         cambiarUsuarioActivo,
-        actualizarUsuario,
-        crearUsuario,
-        actualizarConfiguracion,
-        marcarNotificacionLeida,
-        limpiarTodasNotificaciones,
-        registrarAccionAuditoria,
+        actualizarUsuario: shared.protect(actualizarUsuario),
+        crearUsuario: shared.protect(crearUsuario),
+        actualizarConfiguracion: shared.protect(actualizarConfiguracion),
+        marcarNotificacionLeida: shared.protect(marcarNotificacionLeida),
+        limpiarTodasNotificaciones: shared.protect(limpiarTodasNotificaciones),
+        registrarAccionAuditoria: shared.protect(registrarAccionAuditoria),
         forzarSincronizacion,
         reiniciarDatosFabrica,
         modalPapeleraAbierto,

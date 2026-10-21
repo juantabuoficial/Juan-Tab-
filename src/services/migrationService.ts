@@ -6,7 +6,9 @@
  * de forma destructiva. Requiere autorización explícita del usuario.
  */
 
-import { Firestore, writeBatch, doc, getDocs, collection } from 'firebase/firestore';
+import { Firestore, runTransaction, serverTimestamp, doc, getDocsFromServer, collection } from 'firebase/firestore';
+import { inicializarFirebase } from './firebaseConfig';
+import { clean, equalRows, rowId, type CollectionName, type Row } from './workspaceModel';
 import { PlanSubvencion, Actuacion, User, RegistroAuditoriaAcceso, ComentarioActuacion, NotificacionSistema, CopiaSeguridadPlan } from '../types';
 
 export interface ResumenDatosLocales {
@@ -181,8 +183,8 @@ export function exportarRespaldoOfflineMasivoJSON(opciones?: {
   const localBackup = auditarDatosLocales();
 
   // Preferir datos en memoria si se suministran; de lo contrario usar datos locales persistidos
-  const planes = (opciones?.planes && opciones.planes.length > 0) ? opciones.planes : localBackup.datos.planes;
-  const actuaciones = (opciones?.actuaciones && opciones.actuaciones.length > 0) ? opciones.actuaciones : localBackup.datos.actuaciones;
+  const planes = opciones?.planes ?? localBackup.datos.planes;
+  const actuaciones = opciones?.actuaciones ?? localBackup.datos.actuaciones;
   const usuarios = opciones?.usuarios ?? localBackup.datos.usuarios;
   const registrosAuditoria = opciones?.registrosAuditoria ?? localBackup.datos.registrosAuditoria;
   const comentarios = opciones?.comentarios ?? localBackup.datos.comentarios;
@@ -318,75 +320,40 @@ export async function ejecutarMigracionAFirestore(
   };
 
   try {
-    // 1. MIGRAR PLANES (usando id como document ID)
-    if (copia.datos.planes.length > 0) {
-      onProgreso?.(15, `Migrando ${copia.datos.planes.length} planes provinciales...`);
-      const batchPlanes = writeBatch(db);
-      for (const plan of copia.datos.planes) {
-        const docRef = doc(db, 'planes', plan.id);
-        batchPlanes.set(docRef, plan, { merge: true });
-        informe.planesMigrados++;
-      }
-      await batchPlanes.commit();
-      detalles.push(`Migrados ${informe.planesMigrados} planes exitosamente.`);
-    }
-
-    // 2. MIGRAR ACTUACIONES (respetando los 5 campos clave y documentos Base 14)
-    if (copia.datos.actuaciones.length > 0) {
-      onProgreso?.(40, `Migrando ${copia.datos.actuaciones.length} actuaciones y expedientes...`);
-      // Firestore batches admiten hasta 500 operaciones por batch
-      const chunkSize = 400;
-      for (let i = 0; i < copia.datos.actuaciones.length; i += chunkSize) {
-        const chunk = copia.datos.actuaciones.slice(i, i + chunkSize);
-        const batchAct = writeBatch(db);
-        for (const act of chunk) {
-          const docRef = doc(db, 'actuaciones', act.id);
-          batchAct.set(docRef, act, { merge: true });
-          informe.actuacionesMigradas++;
+    const { auth } = inicializarFirebase();
+    const uid = auth?.currentUser?.uid;
+    if (!uid) throw new Error('Inicia sesión con una cuenta autorizada de administración.');
+    const rows: { collection: CollectionName; row: Row }[] = [
+      ...copia.datos.planes.map(row => ({ collection: 'planes' as const, row })),
+      ...copia.datos.actuaciones.map(row => ({ collection: 'actuaciones' as const, row })),
+      ...copia.datos.planesPapelera.map(row => ({ collection: 'papeleraPlanes' as const, row }))
+    ];
+    if (rows.length > 400) throw new Error('Esta importación contiene más de 400 registros. Divide la copia antes de importar; no se ha modificado ningún registro.');
+    const refs = rows.map(({collection,row}) => doc(db, collection, rowId(collection,row)));
+    if (new Set(refs.map(ref => ref.path)).size !== refs.length) throw new Error('La copia contiene identificadores duplicados.');
+    onProgreso?.(20, 'Comprobando identidad y conciliando registros contra el servidor…');
+    const counts = await runTransaction(db, async tx => {
+      const profile = await tx.get(doc(db, 'usuarios', uid));
+      if (!profile.exists() || profile.data().activo !== true || profile.data().rol !== 'administrador') throw new Error('La importación requiere un administrador activo.');
+      const snapshots = await Promise.all(refs.map(ref => tx.get(ref)));
+      const totals = { planes: 0, actuaciones: 0, papeleraPlanes: 0 };
+      for (let i=0;i<rows.length;i++) {
+        const {collection,row}=rows[i], snap=snapshots[i];
+        if (snap.exists()) {
+          const key=collection==='papeleraPlanes'?'idCopia':'id';
+          if (!equalRows({ ...snap.data(), [key]: snap.id },row)) throw new Error(`Conflicto en ${refs[i].path}. La importación se ha detenido sin sobrescribir registros.`);
+          continue;
         }
-        await batchAct.commit();
+        tx.set(refs[i], { ...clean(row), revisionSync: 1, actualizadoPorUid: uid, actualizadoEnServidor: serverTimestamp() });
+        totals[collection as keyof typeof totals]++;
       }
-      detalles.push(`Migradas ${informe.actuacionesMigradas} actuaciones completas.`);
-    }
-
-    // 3. MIGRAR USUARIOS
-    if (copia.datos.usuarios.length > 0) {
-      onProgreso?.(65, `Migrando ${copia.datos.usuarios.length} usuarios y roles...`);
-      const batchUsr = writeBatch(db);
-      for (const usr of copia.datos.usuarios) {
-        const docRef = doc(db, 'usuarios', usr.id);
-        batchUsr.set(docRef, usr, { merge: true });
-        informe.usuariosMigrados++;
-      }
-      await batchUsr.commit();
-      detalles.push(`Migrados ${informe.usuariosMigrados} usuarios.`);
-    }
-
-    // 4. MIGRAR AUDITORÍA
-    if (copia.datos.registrosAuditoria.length > 0) {
-      onProgreso?.(80, `Migrando ${copia.datos.registrosAuditoria.length} registros de auditoría...`);
-      const batchAud = writeBatch(db);
-      for (const aud of copia.datos.registrosAuditoria.slice(0, 450)) {
-        const docRef = doc(db, 'registrosAuditoria', aud.id);
-        batchAud.set(docRef, aud, { merge: true });
-        informe.auditoriasMigradas++;
-      }
-      await batchAud.commit();
-      detalles.push(`Migrados ${informe.auditoriasMigradas} registros de auditoría.`);
-    }
-
-    // 5. MIGRAR PAPELERA DE RECICLAJE (30 DÍAS)
-    if (copia.datos.planesPapelera.length > 0) {
-      onProgreso?.(95, `Migrando planes en custodia de papelera...`);
-      const batchPap = writeBatch(db);
-      for (const copiaP of copia.datos.planesPapelera) {
-        const docRef = doc(db, 'papeleraPlanes', copiaP.idCopia);
-        batchPap.set(docRef, copiaP, { merge: true });
-        informe.papeleraMigrada++;
-      }
-      await batchPap.commit();
-      detalles.push(`Migradas ${informe.papeleraMigrada} copias de papelera.`);
-    }
+      return totals;
+    });
+    informe.planesMigrados=counts.planes;
+    informe.actuacionesMigradas=counts.actuaciones;
+    informe.papeleraMigrada=counts.papeleraPlanes;
+    detalles.push('Importación atómica de registros nuevos; los existentes idénticos se conservan. Ningún dato local se ha borrado.');
+    detalles.push('Los perfiles, roles, comentarios y auditorías históricos se conservan en la copia original para conciliación; no se convierten en identidades ni eventos autenticados.');
 
     informe.completada = true;
     onProgreso?.(100, 'Migración completada con éxito.');
@@ -417,10 +384,10 @@ export async function compararLocalVsFirestore(db: Firestore): Promise<{
   let actuacionesFirestore = 0;
 
   try {
-    const snapPlanes = await getDocs(collection(db, 'planes'));
+    const snapPlanes = await getDocsFromServer(collection(db, 'planes'));
     planesFirestore = snapPlanes.size;
 
-    const snapAct = await getDocs(collection(db, 'actuaciones'));
+    const snapAct = await getDocsFromServer(collection(db, 'actuaciones'));
     actuacionesFirestore = snapAct.size;
   } catch (err) {
     console.warn('[Comparación] No se pudo leer Firestore:', err);

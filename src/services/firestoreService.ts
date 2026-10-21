@@ -36,7 +36,7 @@ export interface ResultadoOperacion<T = any> {
 
 function obtenerDb(): Firestore | null {
   const { db, status } = inicializarFirebase();
-  if (!db || !status.conectada) {
+  if (!db || !status.configurada) {
     return null;
   }
   return db;

@@ -1,0 +1,23 @@
+{
+  "firestore": [
+    {
+      "database": "ai-studio-planificav10-bf0d6c5c-18d0-4bc9-aace-c233a72b8db9",
+      "rules": "firestore.rules"
+    }
+  ],
+  "emulators": {
+    "firestore": {
+      "host": "127.0.0.1",
+      "port": 8085,
+      "edition": "enterprise"
+    },
+    "ui": {
+      "enabled": false
+    },
+    "singleProjectMode": true,
+    "auth": {
+      "host": "127.0.0.1",
+      "port": 9099
+    }
+  }
+}

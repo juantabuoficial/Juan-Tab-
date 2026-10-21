@@ -1,3 +1,4 @@
+import { EstadoGuardado } from './EstadoGuardado';
 import React, { useState, useEffect } from 'react';
 import {
   X,
@@ -81,7 +82,7 @@ export const EditarPlanModal: React.FC<EditarPlanModalProps> = ({
   pestañaInicial = 'general',
   onPlanEliminado
 }) => {
-  const {
+  const { cambiosPendientes, guardarOperacion,
     actualizarPlan,
     agregarActuacionAlPlan,
     editarActuacionDePlan,
@@ -161,7 +162,7 @@ export const EditarPlanModal: React.FC<EditarPlanModalProps> = ({
   if (!mostrar) return null;
 
   // Guardar datos generales del plan
-  const handleGuardarDatosGenerales = (e: React.FormEvent) => {
+  const handleGuardarDatosGenerales = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!nombre.trim()) return;
 
@@ -179,19 +180,19 @@ export const EditarPlanModal: React.FC<EditarPlanModalProps> = ({
       descripcion: descripcion.trim()
     };
 
-    actualizarPlan(planActualizado);
+    await guardarOperacion(() => actualizarPlan(planActualizado));
     setMensajeExito('Datos generales del plan actualizados correctamente.');
     setTimeout(() => setMensajeExito(null), 4000);
   };
 
   // Añadir una nueva actuación al plan
-  const handleAnadirActuacion = (e: React.FormEvent) => {
+  const handleAnadirActuacion = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!nuevoTitulo.trim()) return;
 
     const numFinal = nuevoNumero.trim() || String((plan.actuacionesPrevistas?.length || 0) + 1).padStart(2, '0');
 
-    agregarActuacionAlPlan(plan.id, {
+    await guardarOperacion(() => agregarActuacionAlPlan(plan.id, {
       numero: numFinal,
       entidadLocal: nuevoEELL,
       titulo: nuevoTitulo.trim(),
@@ -199,7 +200,7 @@ export const EditarPlanModal: React.FC<EditarPlanModalProps> = ({
       subvencionSolicitada: Number(nuevoImporte) || 0,
       plazoEjecucion: nuevoPlazoEjecucion || plazoEjecucionMaximo,
       plazoJustificacion: nuevoPlazoJustificacion || plazoJustificacionMaximo
-    });
+    }));
 
     setNuevoTitulo('');
     setNuevaPartida('');
@@ -213,10 +214,11 @@ export const EditarPlanModal: React.FC<EditarPlanModalProps> = ({
   };
 
   // Guardar edición de actuación existente
-  const handleGuardarModificacionActuacion = (e: React.FormEvent) => {
+  const handleGuardarModificacionActuacion = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!actuacionEditando) return;
 
+    await guardarOperacion(() => {
     editarActuacionDePlan(plan.id, actuacionEditando.id, {
       numero: editNumero.trim() || actuacionEditando.numero,
       entidadLocal: editEELL || actuacionEditando.entidadLocal,
@@ -225,6 +227,7 @@ export const EditarPlanModal: React.FC<EditarPlanModalProps> = ({
       subvencionSolicitada: Number(editImporte) || 0
     });
 
+    });
     setActuacionEditando(null);
     setMensajeExito(`Actuación nº ${editNumero || actuacionEditando.numero} modificada correctamente.`);
     setTimeout(() => setMensajeExito(null), 4000);
@@ -344,7 +347,8 @@ export const EditarPlanModal: React.FC<EditarPlanModalProps> = ({
               PESTAÑA 1: DATOS GENERALES DEL PLAN
               ========================================================================= */}
           {pestaña === 'general' && (
-            <form onSubmit={handleGuardarDatosGenerales} className="space-y-4">
+            <form onSubmit={e => { void handleGuardarDatosGenerales(e).catch(() => {}); }} className="space-y-4">
+<EstadoGuardado />
               <div className="grid grid-cols-1 gap-3">
                 {/* Nombre del Plan */}
                 <div>
@@ -517,6 +521,7 @@ export const EditarPlanModal: React.FC<EditarPlanModalProps> = ({
                   </button>
                   <button
                     type="submit"
+              disabled={cambiosPendientes > 0}
                     className="flex items-center gap-2 px-5 py-2 rounded-xl bg-[#004F90] hover:bg-[#003B71] text-white font-black shadow-xs transition text-xs"
                   >
                     <Save className="w-4 h-4" />
@@ -531,7 +536,8 @@ export const EditarPlanModal: React.FC<EditarPlanModalProps> = ({
               PESTAÑA 2: AÑADIR ACTUACIÓN AL PLAN
               ========================================================================= */}
           {pestaña === 'anadir' && (
-            <form onSubmit={handleAnadirActuacion} className="space-y-4">
+            <form onSubmit={e => { void handleAnadirActuacion(e).catch(() => {}); }} className="space-y-4">
+<EstadoGuardado />
               <div className="p-3.5 rounded-xl bg-blue-50/70 border border-blue-200 text-slate-700 text-xs">
                 <span className="font-bold text-[#004F90]">Añadir actuación al {plan.nombre}:</span>
                 <p className="text-[11px] text-slate-600 mt-0.5">
@@ -677,6 +683,7 @@ export const EditarPlanModal: React.FC<EditarPlanModalProps> = ({
                 </button>
                 <button
                   type="submit"
+              disabled={cambiosPendientes > 0}
                   className="flex items-center gap-2 px-5 py-2 rounded-xl bg-[#004F90] hover:bg-[#003B71] text-white font-black shadow-xs transition"
                 >
                   <Plus className="w-4 h-4" />
@@ -693,7 +700,8 @@ export const EditarPlanModal: React.FC<EditarPlanModalProps> = ({
             <div className="space-y-4">
               {/* Formulario si se está modificando una actuación concreta */}
               {actuacionEditando ? (
-                <form onSubmit={handleGuardarModificacionActuacion} className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
+                <form onSubmit={e => { void handleGuardarModificacionActuacion(e).catch(() => {}); }} className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
+<EstadoGuardado />
                   <div className="flex items-center justify-between pb-2 border-b border-slate-200">
                     <span className="font-black text-slate-900 text-xs flex items-center gap-1.5">
                       <Edit className="w-3.5 h-3.5 text-[#004F90]" />
@@ -787,6 +795,7 @@ export const EditarPlanModal: React.FC<EditarPlanModalProps> = ({
                     </button>
                     <button
                       type="submit"
+              disabled={cambiosPendientes > 0}
                       className="px-4 py-1.5 rounded-lg bg-[#004F90] hover:bg-[#003B71] text-white font-bold shadow-2xs"
                     >
                       Guardar Modificación
@@ -853,13 +862,13 @@ export const EditarPlanModal: React.FC<EditarPlanModalProps> = ({
 
                           <button
                             type="button"
-                            onClick={() => {
+                            onClick={() => { void (async () => {
                               if (window.confirm(`¿Seguro que deseas eliminar la actuación nº ${act.numero} (${act.entidadLocal}) de este plan?`)) {
-                                eliminarActuacionDePlan(plan.id, act.id);
+                                await guardarOperacion(() => eliminarActuacionDePlan(plan.id, act.id));
                                 setMensajeExito(`Actuación nº ${act.numero} eliminada del plan.`);
                                 setTimeout(() => setMensajeExito(null), 3500);
                               }
-                            }}
+                            })().catch(() => {}); }}
                             className="p-1.5 rounded-lg border border-red-200 text-red-500 hover:bg-red-50 hover:text-red-700 transition"
                             title="Eliminar actuación del plan"
                           >
@@ -958,12 +967,12 @@ export const EditarPlanModal: React.FC<EditarPlanModalProps> = ({
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  eliminarPlan(plan.id, guardarCopiaAlBorrar);
+                onClick={() => { void (async () => {
+                  await guardarOperacion(() => eliminarPlan(plan.id, guardarCopiaAlBorrar));
                   setMostrarConfirmacionBorrar(false);
                   if (onPlanEliminado) onPlanEliminado();
                   onCerrar();
-                }}
+                })().catch(() => {}); }}
                 className="flex items-center gap-1.5 px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-black text-xs shadow-xs transition"
               >
                 <Trash2 className="w-4 h-4" />

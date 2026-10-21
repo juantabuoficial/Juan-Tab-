@@ -20,6 +20,13 @@ import { WifiOff, ShieldCheck, Heart } from 'lucide-react';
 
 const MainContent: React.FC = () => {
   const {
+    usuarioActual,
+    estadoSincronizacion,
+    errorSincronizacion,
+    cambiosPendientes,
+    datosCompartidosListos,
+    forzarSincronizacion,
+    conservarCopiaYRecargar,
     actuacionActiva,
     seleccionarActuacion,
     alertaCamposIncompletos,
@@ -40,6 +47,8 @@ const MainContent: React.FC = () => {
 
   const [resetPlanesKey, setResetPlanesKey] = useState(0);
 
+  if (!usuarioActual) return <AuthModal mostrar onCerrar={() => {}} />;
+
   return (
     <div className="min-h-screen flex flex-col bg-[#F4F7FA] text-[#1E293B]">
       {/* Header Superior Institucional con Logo y Menú Principal Arriba */}
@@ -57,19 +66,26 @@ const MainContent: React.FC = () => {
         abrirAuthModal={() => setModalAuthAbierto(true)}
       />
 
+      <div role="status" className={`px-4 py-3 border-b text-sm ${errorSincronizacion ? 'bg-red-50 text-red-900' : 'bg-blue-50 text-blue-950'}`}>
+        {errorSincronizacion || (estadoSincronizacion === 'sincronizado' ? 'Guardado en el servidor · Datos compartidos actualizados' : estadoSincronizacion === 'cargando' ? 'Cargando datos compartidos…' : `${cambiosPendientes} cambios pendientes de confirmación del servidor`)}
+        {errorSincronizacion && <div className="flex flex-wrap gap-3 mt-2">
+          <button className="rounded border p-2" onClick={() => { void forzarSincronizacion().catch(() => {}); }}>Reintentar</button>
+          <button className="rounded border p-2" onClick={() => { if (window.confirm('Se conservará una copia local completa de tu trabajo antes de recargar los datos del servidor. ¿Continuar?')) conservarCopiaYRecargar(); }}>Conservar copia y recargar</button>
+        </div>}
+      </div>
       {/* Banner de Modo Offline Activo */}
         {!isOnline && (
           <div className="bg-amber-100 border-b border-amber-300 text-amber-950 px-4 py-2 text-xs font-bold flex items-center justify-center gap-2 shadow-2xs">
             <WifiOff className="w-4 h-4 text-amber-700 animate-pulse" />
             <span>
-              Modo Offline Completo Activo · Todos los datos se guardan con cifrado local y se sincronizarán al recuperar la conexión a la red de la Diputación.
+              Sin conexión. Los cambios locales no confirman guardado en el servidor. Las ediciones pendientes se conservan por cuenta y se reintentarán al recuperar la conexión.
             </span>
           </div>
         )}
 
         {/* Contenedor Principal de Vista (Pantalla completa para tablas de Actuaciones y Planes) */}
         <main className={`flex-1 w-full mx-auto p-3 sm:p-5 md:p-6 pb-20 md:pb-8 transition-all ${actuacionActiva || vistaActual === 'actuaciones' || vistaActual === 'planes' ? 'max-w-none px-3 sm:px-6 md:px-8' : 'max-w-7xl'}`}>
-          {actuacionActiva ? (
+          {!datosCompartidosListos ? <p className="p-6">Esperando una lectura autorizada del servidor. Los datos locales anteriores se conservan para exportación y conciliación.</p> : actuacionActiva ? (
             <ActuacionDetail
               onVolver={() => {
                 seleccionarActuacion(null);
@@ -248,7 +264,7 @@ class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundarySta
               </p>
             </div>
             <p className="text-xs text-slate-600 leading-relaxed bg-slate-50 p-3 rounded-xl border border-slate-100">
-              Se ha asegurado la sesión para <strong>Juan Hinojo García</strong> (Jefe de Servicio). Pulsa el botón para recargar la interfaz con todos los datos actualizados.
+              Pulsa el botón para recargar. La identidad y los permisos se comprobarán de nuevo con Firebase.
             </p>
             <button
               onClick={this.handleReset}

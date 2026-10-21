@@ -1,3 +1,4 @@
+import { EstadoGuardado } from './EstadoGuardado';
 import React, { useState } from 'react';
 import {
   Settings,
@@ -33,6 +34,8 @@ interface SettingsModalProps {
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({ mostrar, onCerrar }) => {
   const {
+    esperarGuardado,
+    cambiosPendientes,
     configuracion,
     actualizarConfiguracion,
     forzarSincronizacion,
@@ -63,6 +66,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ mostrar, onCerrar 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-950/70 backdrop-blur-xs animate-in fade-in duration-200">
       <div className="w-full max-w-2xl max-h-[90vh] flex flex-col rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden">
+        <EstadoGuardado />
         {/* Cabecera */}
         <div className="p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-900">
           <div className="flex items-center gap-2.5">
@@ -130,7 +134,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ mostrar, onCerrar 
                     Notificaciones Push Personalizadas
                   </span>
                   <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                    Alertas inmediatas en escritorio y dispositivos móviles sobre vencimientos próximos.
+                    Avisos del navegador mientras PLANIFICA está abierta y el navegador lo permite.
                   </span>
                 </div>
                 <input
@@ -149,15 +153,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ mostrar, onCerrar 
                     Recordatorios Diarios por Correo Electrónico
                   </span>
                   <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                    Resumen matutino de expedientes y actuaciones pendientes de calificar.
+                    Envío de correo pendiente de configurar; no se envían recordatorios actualmente.
                   </span>
                 </div>
                 <input
                   type="checkbox"
-                  checked={configuracion.recordatoriosEmailDiarios}
-                  onChange={(e) =>
-                    actualizarConfiguracion({ recordatoriosEmailDiarios: e.target.checked })
-                  }
+                  checked={false}
+                  disabled
                   className="w-4 h-4 rounded text-blue-600"
                 />
               </label>
@@ -207,66 +209,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ mostrar, onCerrar 
           <div className="space-y-3 pt-4 border-t border-slate-100 dark:border-slate-800">
             <h3 className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider flex items-center gap-2">
               <Shield className="w-4 h-4 text-emerald-600" />
-              <span>Seguridad, Biometría y Cifrado Extremo a Extremo</span>
+              <span>Identidad y seguridad</span>
             </h3>
 
             <div className="space-y-2">
-              <label className="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 cursor-pointer">
-                <div>
-                  <span className="font-semibold text-slate-900 dark:text-white block">
-                    Cifrado de Extremo a Extremo (E2EE - AES-GCM 256)
-                  </span>
-                  <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                    Garantiza la protección de la propiedad intelectual, privacidad de expedientes e inviolabilidad del código.
-                  </span>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={configuracion.cifradoExtremoAExtremo}
-                  onChange={(e) =>
-                    actualizarConfiguracion({ cifradoExtremoAExtremo: e.target.checked })
-                  }
-                  className="w-4 h-4 rounded text-blue-600"
-                />
-              </label>
-
-              <label className="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 cursor-pointer">
-                <div>
-                  <span className="font-semibold text-slate-900 dark:text-white block">
-                    Autenticación Biométrica (WebAuthn / TouchID / FaceID)
-                  </span>
-                  <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                    Acceso rápido y seguro mediante huella o reconocimiento facial de la Diputación de Cádiz.
-                  </span>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={configuracion.autenticacionBiometrica}
-                  onChange={(e) =>
-                    actualizarConfiguracion({ autenticacionBiometrica: e.target.checked })
-                  }
-                  className="w-4 h-4 rounded text-blue-600"
-                />
-              </label>
-
-              <label className="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 cursor-pointer">
-                <div>
-                  <span className="font-semibold text-slate-900 dark:text-white block">
-                    Autenticación de Dos Factores (2FA Obligatoria)
-                  </span>
-                  <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                    Doble validación de seguridad mediante código numérico de 6 dígitos.
-                  </span>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={configuracion.autenticacion2FA}
-                  onChange={(e) =>
-                    actualizarConfiguracion({ autenticacion2FA: e.target.checked })
-                  }
-                  className="w-4 h-4 rounded text-blue-600"
-                />
-              </label>
+              <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-700">El acceso se verifica con Firebase Authentication y un perfil activo. La configuración de factores de autenticación pertenece al proveedor de identidad. Esta aplicación no ofrece biometría ni códigos de verificación simulados.</p>
 
               {/* Firma Electrónica del Dispositivo */}
               <div className="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800">
@@ -427,7 +374,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ mostrar, onCerrar 
         {/* Pie */}
         <div className="p-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 flex justify-end">
           <button
-            onClick={onCerrar}
+            onClick={() => { void esperarGuardado().then(onCerrar).catch(() => {}); }}
+            disabled={cambiosPendientes > 0}
             className="px-5 py-2 rounded-xl bg-blue-700 hover:bg-blue-800 text-white font-bold text-xs shadow-sm transition"
           >
             Guardar y Cerrar

@@ -1,3 +1,4 @@
+import { fechaServidor } from '../utils/fechaServidor';
 import React, { useState } from 'react';
 import {
   History,
@@ -168,7 +169,7 @@ export const AuditLogModal: React.FC<AuditLogModalProps> = ({ mostrar, onCerrar 
                 {registrosFiltrados.map((reg) => (
                   <tr key={reg.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40">
                     <td className="py-2.5 px-3 font-mono text-[11px] text-slate-700 dark:text-slate-300 whitespace-nowrap">
-                      {new Date(reg.fechaHora).toLocaleString('es-ES', {
+                      {new Date(fechaServidor(reg)).toLocaleString('es-ES', {
                         day: '2-digit',
                         month: '2-digit',
                         year: 'numeric',

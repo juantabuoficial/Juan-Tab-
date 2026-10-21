@@ -1,3 +1,4 @@
+import { EstadoGuardado } from './EstadoGuardado';
 import React, { useState, useEffect } from 'react';
 import {
   X,
@@ -32,6 +33,8 @@ export const EditarActuacionModal: React.FC<EditarActuacionModalProps> = ({
   onGuardadoExitoso
 }) => {
   const {
+    cambiosPendientes,
+    guardarOperacion,
     actualizarActuacion,
     actualizarActuacionCabecera,
     planes,
@@ -53,7 +56,7 @@ export const EditarActuacionModal: React.FC<EditarActuacionModalProps> = ({
   const [plazoJustificacion, setPlazoJustificacion] = useState(actuacion.plazos?.plazoJustificacion || '');
   const [plazoJustificacionAmpliado, setPlazoJustificacionAmpliado] = useState(actuacion.plazos?.plazoJustificacionAmpliado || '');
 
-  const [tecnicoId, setTecnicoId] = useState(actuacion.tecnicoAsignadoId || 'usr-tec-1');
+  const [tecnicoId, setTecnicoId] = useState(actuacion.tecnicoAsignadoId || '');
   const [observaciones, setObservaciones] = useState(actuacion.observacionesInternas || '');
   const [mensajeExito, setMensajeExito] = useState<string | null>(null);
 
@@ -70,13 +73,13 @@ export const EditarActuacionModal: React.FC<EditarActuacionModalProps> = ({
     setPlazoEjecucionAmpliado(actuacion.plazos?.plazoEjecucionAmpliado || '');
     setPlazoJustificacion(actuacion.plazos?.plazoJustificacion || '');
     setPlazoJustificacionAmpliado(actuacion.plazos?.plazoJustificacionAmpliado || '');
-    setTecnicoId(actuacion.tecnicoAsignadoId || 'usr-tec-1');
+    setTecnicoId(actuacion.tecnicoAsignadoId || '');
     setObservaciones(actuacion.observacionesInternas || '');
   }, [actuacion]);
 
   if (!mostrar) return null;
 
-  const handleGuardar = (e: React.FormEvent) => {
+  const handleGuardar = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!titulo.trim()) return;
 
@@ -111,6 +114,7 @@ export const EditarActuacionModal: React.FC<EditarActuacionModalProps> = ({
       observacionesInternas: observaciones.trim()
     };
 
+    await guardarOperacion(() => {
     // Actualizar globalmente
     actualizarActuacion(actuacion.id, datosNuevos);
     actualizarActuacionCabecera(datosNuevos);
@@ -121,6 +125,8 @@ export const EditarActuacionModal: React.FC<EditarActuacionModalProps> = ({
       `Actuación Nº ${datosNuevos.numero}`,
       `Modificación de datos principales de la actuación ${actuacion.id} (${datosNuevos.entidadLocal}): título, importes y plazos actualizados.`
     );
+
+    });
 
     setMensajeExito(`Datos de la actuación nº ${datosNuevos.numero} guardados correctamente.`);
     setTimeout(() => {
@@ -170,7 +176,8 @@ export const EditarActuacionModal: React.FC<EditarActuacionModalProps> = ({
         )}
 
         {/* Formulario con scroll */}
-        <form onSubmit={handleGuardar} className="flex-1 overflow-y-auto p-4 sm:p-6 text-xs space-y-4">
+        <form onSubmit={e => { void handleGuardar(e).catch(() => {}); }} className="flex-1 overflow-y-auto p-4 sm:p-6 text-xs space-y-4">
+<EstadoGuardado />
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             {/* Número */}
             <div>
@@ -415,6 +422,7 @@ export const EditarActuacionModal: React.FC<EditarActuacionModalProps> = ({
             </button>
             <button
               type="submit"
+              disabled={cambiosPendientes > 0}
               className="flex items-center gap-2 px-5 py-2 rounded-xl bg-[#004F90] hover:bg-[#003B71] text-white font-black shadow-xs transition"
             >
               <Save className="w-4 h-4" />

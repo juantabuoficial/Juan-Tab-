@@ -288,7 +288,7 @@ export const Header: React.FC<HeaderProps> = ({
             >
               <div className="relative w-7 h-7 rounded-lg bg-[#004F90] text-white flex items-center justify-center font-bold text-xs uppercase shadow-2xs">
                 {usuarioActual ? usuarioActual.nombre[0] : 'J'}
-                <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-500 border-2 border-white rounded-full" title="Autenticado y conectado" />
+                <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-500 border-2 border-white rounded-full" title="Identidad autenticada; consultar el indicador de sincronización" />
               </div>
               <div className="hidden sm:flex flex-col text-left leading-tight">
                 <div className="flex items-center gap-1.5">
@@ -296,7 +296,7 @@ export const Header: React.FC<HeaderProps> = ({
                     {usuarioActual ? `${usuarioActual.nombre} ${usuarioActual.apellidos}` : 'Juan Hinojo García'}
                   </span>
                   <span className="px-1.5 py-0.2 rounded text-[9px] font-black bg-emerald-100 text-emerald-800 uppercase tracking-wider">
-                    Conectado
+                    Sesión iniciada
                   </span>
                 </div>
                 <span className="text-[10px] text-slate-500 truncate max-w-[150px]">
@@ -318,35 +318,14 @@ export const Header: React.FC<HeaderProps> = ({
                   </div>
                   <div className="text-[10px] text-slate-400">{usuarioActual?.email}</div>
                   <span className="inline-block mt-1.5 px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-blue-50 text-[#004F90] border border-blue-200">
-                    {usuarioActual?.rol === 'jefe_servicio' ? 'Jefe de Servicio (Admin)' : 'Técnico Revisor'}
+                    {usuarioActual?.rol?.replaceAll('_', ' ')}
                   </span>
                 </div>
 
-                <div className="space-y-1">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-2">
-                    Cambiar Perfil Activo
-                  </span>
-                  {usuarios.map((u) => (
-                    <button
-                      key={u.id}
-                      onClick={() => {
-                        cambiarUsuarioActivo(u.id);
-                        setMostrarMenuUsuario(false);
-                      }}
-                      className={`w-full flex items-center justify-between p-2 rounded-xl text-xs text-left transition ${
-                        usuarioActual?.id === u.id
-                          ? 'bg-blue-50 text-[#004F90] font-bold'
-                          : 'text-slate-600 hover:bg-slate-50'
-                      }`}
-                    >
-                      <div className="flex flex-col truncate">
-                        <span className="truncate">{u.nombre} {u.apellidos}</span>
-                        <span className="text-[10px] text-slate-400">{u.cargo}</span>
-                      </div>
-                      {usuarioActual?.id === u.id && <Check className="w-3.5 h-3.5 text-[#004F90]" />}
-                    </button>
-                  ))}
-                </div>
+                <button className="w-full p-2 rounded-xl border text-xs" onClick={() => {
+                  setMostrarMenuUsuario(false);
+                  abrirAuthModal();
+                }}>Gestionar sesión de Firebase</button>
 
                 <div className="pt-2 border-t border-slate-100 flex flex-col gap-1">
                   <button

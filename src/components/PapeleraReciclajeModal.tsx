@@ -1,3 +1,4 @@
+import { EstadoGuardado } from './EstadoGuardado';
 import React, { useState, useMemo } from 'react';
 import {
   Archive,
@@ -33,7 +34,7 @@ export const PapeleraReciclajeModal: React.FC<PapeleraReciclajeModalProps> = ({
   onCerrar,
   onPlanRestaurado
 }) => {
-  const {
+  const { guardarOperacion,
     planesPapelera,
     restaurarPlan,
     eliminarCopiaDefinitiva,
@@ -121,6 +122,7 @@ export const PapeleraReciclajeModal: React.FC<PapeleraReciclajeModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+      <EstadoGuardado />
       <div className="w-full max-w-4xl max-h-[92vh] flex flex-col rounded-2xl bg-white border border-slate-200 shadow-2xl overflow-hidden animate-in zoom-in-95 duration-150">
         {/* =========================================================================
             1. CABECERA INSTITUCIONAL DE LA PAPELERA
@@ -401,14 +403,14 @@ export const PapeleraReciclajeModal: React.FC<PapeleraReciclajeModalProps> = ({
                     <div className="flex items-center gap-2 self-end md:self-center shrink-0">
                       <button
                         type="button"
-                        onClick={() => {
-                          const exito = restaurarPlan(copia.idCopia);
+                        onClick={() => { void (async () => {
+                          const exito = await guardarOperacion(() => restaurarPlan(copia.idCopia));
                           if (exito) {
                             setMensajeExito(`¡El plan "${copia.plan.nombre}" ha sido restaurado con éxito junto con todas sus actuaciones!`);
                             if (onPlanRestaurado) onPlanRestaurado(copia.plan.nombre);
                             setTimeout(() => setMensajeExito(null), 5000);
                           }
-                        }}
+                        })().catch(() => {}); }}
                         className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs shadow-xs transition active:scale-[0.98]"
                         title="Restaurar este plan íntegro a la lista de planes activos"
                       >
