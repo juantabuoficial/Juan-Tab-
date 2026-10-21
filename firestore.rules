@@ -113,12 +113,10 @@ service cloud.firestore {
       // LECTURA: Personal autenticado con perfil activo, o el propio usuario autenticado consultando su perfil
       allow read: if isPersonalAutorizado() || (isSignedIn() && request.auth.uid == usuarioId);
 
-      // ALTA DE USUARIOS: Creación de perfil inicial por el propio usuario autenticado (primer acceso)
-      // o creación manual de cuentas por el Administrador.
-      allow create: if isSignedIn() && (
-        (request.auth.uid == usuarioId) ||
-        (isAdmin() && isValidId(usuarioId))
-      );
+      // ALTA DE USUARIOS: solo personal administrador validado.
+      // El alta inicial debe realizarse desde un entorno de administración confiable
+      // (consola / Admin SDK). Prohibido que un cliente se otorgue roles.
+      allow create: if isAdmin() && isValidId(usuarioId);
 
       // MODIFICACIÓN:
       // - El usuario puede actualizar únicamente su fecha de 'ultimoAcceso'.
