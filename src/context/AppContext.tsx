@@ -199,21 +199,8 @@ const STORAGE_KEYS = {
   COMENTARIOS: 'adl_cadiz_comentarios_v2'
 };
 
-// Limpieza automática de claves anteriores que contenían datos de demostración o inventados
-if (typeof window !== 'undefined') {
-  try {
-    const viejasClaves = [
-      'adl_cadiz_actuaciones_v1.1',
-      'adl_cadiz_planes_v1.1',
-      'adl_cadiz_comentarios_v1.1',
-      'adl_cadiz_auditoria_v1.1',
-      'adl_cadiz_notificaciones_v1.1',
-      'adl_cadiz_actuaciones_v1',
-      'adl_cadiz_planes_v1'
-    ];
-    viejasClaves.forEach((k) => localStorage.removeItem(k));
-  } catch {}
-}
+// No eliminar claves heredadas automáticamente: podrían contener expedientes reales.
+// La migración y la limpieza deben hacerse tras una copia de seguridad verificada.
 
 const FILTROS_DEFECTO: FiltrosBusqueda = {
   plan: '',
