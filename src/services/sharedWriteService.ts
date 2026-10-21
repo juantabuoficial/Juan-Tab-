@@ -5,7 +5,7 @@
  * hay que desplegar reglas seguras, provisionar perfiles y comprobar Auth.
  * Cada registro incluye revisionSync para impedir sobrescrituras silenciosas.
  */
-import { doc, getDoc, runTransaction, serverTimestamp } from 'firebase/firestore';
+import { doc, runTransaction, serverTimestamp } from 'firebase/firestore';
 import { inicializarFirebase } from './firebaseConfig';
 import { comprobarAccesoCompartido } from './sharedAccessService';
 import type { PlanSubvencion, Actuacion } from '../types';
