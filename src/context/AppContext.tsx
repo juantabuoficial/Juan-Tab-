@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { leerDatosCompartidos } from '../services/sharedDataReadService';
 import {
   Actuacion,
   DocumentoActuacion,
@@ -2649,11 +2650,46 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setNotificaciones([]);
   };
 
-  // Forzar sincronización manual
+  // Lectura manual real: nunca subir automáticamente datos locales a Firestore.
+  // El estado de sincronización solo se confirma tras consultar ambas colecciones.
   const forzarSincronizacion = async () => {
     setEstadoSincronizacion('guardando');
-    await new Promise((resolve) => setTimeout(resolve, 600));
-    setEstadoSincronizacion(isOnline ? 'sincronizado' : 'offline');
+    try {
+      const resultado = await leerDatosCompartidos();
+      if (!resultado.ok) {
+        console.warn('[PLANIFICA] No se pudo consultar Firestore:', resultado.motivo);
+        setEstadoSincronizacion('offline');
+        return;
+      }
+
+      // Proteger cualquier trabajo local antes de reemplazar el estado visible.
+      // El respaldo incluye incluso valores iniciales o aún no clasificados.
+      const claveRespaldo = 'adl_cadiz_respaldo_prelectura_firestore_v2';
+      if (localStorage.getItem(claveRespaldo) === null) {
+        localStorage.setItem(claveRespaldo, JSON.stringify({
+          fecha: new Date().toISOString(),
+          planes,
+          actuaciones
+        }));
+      }
+
+      // Una base vacía NO debe hacer desaparecer las fichas locales.
+      if (resultado.planes.length === 0 && resultado.actuaciones.length === 0) {
+        console.info('[PLANIFICA] Firestore vacío: se conserva el estado local.');
+        setEstadoSincronizacion('offline');
+        return;
+      }
+      // No mezclar orígenes ni sobrescribir automáticamente registros locales.
+      // La conciliación de datos queda pendiente de un flujo explícito de migración.
+      console.info('[PLANIFICA] Consulta remota validada:', {
+        planes: resultado.planes.length,
+        actuaciones: resultado.actuaciones.length
+      });
+      setEstadoSincronizacion('offline');
+    } catch (error) {
+      console.error('[PLANIFICA] Error consultando Firestore:', error);
+      setEstadoSincronizacion('offline');
+    }
   };
 
   // Reiniciar datos de fábrica
