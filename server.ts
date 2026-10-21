@@ -322,7 +322,8 @@ ${text ? `\nTexto completo o tabla extraída:\n${text.slice(0, 80000)}` : ''}
 // Inicializar Vite middleware en modo desarrollo o estáticos en producción
 async function startServer() {
   const isProduction = process.env.NODE_ENV === 'production';
-  const port = 3000;
+  const port = Number(process.env.PORT || 3000);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Puerto de servidor no válido.');
 
   if (!isProduction) {
     const vite = await createViteServer({

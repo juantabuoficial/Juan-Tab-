@@ -1,3 +1,4 @@
+import { EstadoGuardado } from './EstadoGuardado';
 import React, { useState } from 'react';
 import { Plus, X, Building2, Calendar, Euro, FileText, CheckCircle2 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
@@ -14,7 +15,7 @@ export const NuevaActuacionModal: React.FC<NuevaActuacionModalProps> = ({
   onCerrar,
   onActuacionCreada
 }) => {
-  const { crearNuevaActuacion, actuaciones, planes } = useApp();
+  const { cambiosPendientes, guardarOperacion,  crearNuevaActuacion, actuaciones, planes } = useApp();
 
   const [numero, setNumero] = useState(String(actuaciones.length + 1).padStart(2, '0'));
   const [municipio, setMunicipio] = useState(MUNICIPIOS_CADIZ[0] || 'Alcalá de los Gazules');
@@ -32,11 +33,11 @@ export const NuevaActuacionModal: React.FC<NuevaActuacionModalProps> = ({
 
   if (!mostrar) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!titulo) return;
 
-    const nueva = crearNuevaActuacion({
+    const nueva = await guardarOperacion(() => crearNuevaActuacion({
       numero,
       entidadLocal: municipio,
       plan,
@@ -53,7 +54,7 @@ export const NuevaActuacionModal: React.FC<NuevaActuacionModalProps> = ({
         plazoEjecucionAmpliado,
         plazoJustificacionAmpliado
       }
-    });
+    }));
 
     onActuacionCreada(nueva.id);
     onCerrar();
@@ -86,7 +87,8 @@ export const NuevaActuacionModal: React.FC<NuevaActuacionModalProps> = ({
         </div>
 
         {/* Formulario */}
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-6 space-y-4 text-xs custom-scrollbar">
+        <form onSubmit={e => { void handleSubmit(e).catch(() => {}); }} className="flex-1 overflow-y-auto p-6 space-y-4 text-xs custom-scrollbar">
+<EstadoGuardado />
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
@@ -284,6 +286,7 @@ export const NuevaActuacionModal: React.FC<NuevaActuacionModalProps> = ({
             </button>
             <button
               type="submit"
+              disabled={cambiosPendientes > 0}
               className="px-5 py-2 rounded-xl bg-blue-700 hover:bg-blue-800 text-white font-bold text-xs shadow-sm transition"
             >
               Registrar Actuación

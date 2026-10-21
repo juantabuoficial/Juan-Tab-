@@ -1,3 +1,4 @@
+import { EstadoGuardado } from './EstadoGuardado';
 import React, { useState, useRef } from 'react';
 import {
   ArrowLeft,
@@ -49,7 +50,7 @@ interface NuevoPlanViewProps {
 }
 
 export const NuevoPlanView: React.FC<NuevoPlanViewProps> = ({ onVolver, onPlanCreado }) => {
-  const {
+  const { cambiosPendientes, guardarOperacion,
     importarPlanCompletoDesdeBasesPDF,
     crearPlan,
     importarActuacionesPDFAlPlan
@@ -349,7 +350,7 @@ export const NuevoPlanView: React.FC<NuevoPlanViewProps> = ({ onVolver, onPlanCr
     setPresupuestoTotalF1(nuevoTotal);
   };
 
-  const handleGuardarPlanF1 = () => {
+  const handleGuardarPlanF1 = async () => {
     if (!datosExtraidosF1 || datosExtraidosF1.actuaciones.length === 0) {
       setErrorF1('No hay actuaciones para dar de alta. Sube un PDF o añade filas manualmente.');
       return;
@@ -361,7 +362,7 @@ export const NuevoPlanView: React.FC<NuevoPlanViewProps> = ({ onVolver, onPlanCr
     const plazoJustFinal = plazoJustificacionF1 || datosExtraidosF1.plazoJustificacionMaximo || `${ejercicioFinal + 1}-09-30`;
     const ptoFinal = presupuestoTotalF1 > 0 ? presupuestoTotalF1 : datosExtraidosF1.presupuestoTotal;
 
-    const res = importarPlanCompletoDesdeBasesPDF(
+    const res = await guardarOperacion(() => importarPlanCompletoDesdeBasesPDF(
       {
         nombre: nombreFinal,
         codigo: datosExtraidosF1.codigoPlan || `${nombreFinal.slice(0, 3).toUpperCase()}-${ejercicioFinal}`,
@@ -374,7 +375,7 @@ export const NuevoPlanView: React.FC<NuevoPlanViewProps> = ({ onVolver, onPlanCr
         descripcion: datosExtraidosF1.descripcion
       },
       datosExtraidosF1.actuaciones
-    );
+    ));
 
     onPlanCreado(res.plan.id, res.plan);
   };
@@ -540,7 +541,7 @@ export const NuevoPlanView: React.FC<NuevoPlanViewProps> = ({ onVolver, onPlanCr
     setActuacionesF2((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const handleGuardarPlanF2 = () => {
+  const handleGuardarPlanF2 = async () => {
     if (actuacionesF2.length === 0) {
       setErrorF2(
         'No se pueden dar de alta un plan sin actuaciones. Sube o arrastra un PDF con las solicitudes, pulsa "Añadir Fila" o utiliza "Cargar Actuaciones de Ejemplo (Cádiz)".'
@@ -553,7 +554,7 @@ export const NuevoPlanView: React.FC<NuevoPlanViewProps> = ({ onVolver, onPlanCr
     const sumaSubv = actuacionesF2.reduce((acc, a) => acc + (Number(a.subvencionSolicitada) || 0), 0);
     const ptoFinal = presupuestoTotalF2 > 0 ? presupuestoTotalF2 : sumaSubv;
 
-    const res = importarPlanCompletoDesdeBasesPDF(
+    const res = await guardarOperacion(() => importarPlanCompletoDesdeBasesPDF(
       {
         nombre: nombreFinal,
         codigo: codigoPlanF2.trim() || `${nombreFinal.slice(0, 3).toUpperCase()}-${ejercicioFinal}`,
@@ -566,13 +567,14 @@ export const NuevoPlanView: React.FC<NuevoPlanViewProps> = ({ onVolver, onPlanCr
         descripcion: descripcionF2 || `Plan provincial ${ejercicioFinal} registrado con ${actuacionesF2.length} actuaciones reconocidas.`
       },
       actuacionesF2
-    );
+    ));
 
     onPlanCreado(res.plan.id, res.plan);
   };
 
   return (
     <div className="space-y-5 animate-in fade-in duration-150">
+      <EstadoGuardado />
       {/* Botón Volver + Título Principal */}
       <div className="flex items-center justify-between flex-wrap gap-3 pb-3 border-b border-slate-200">
         <div className="flex items-center gap-3">
@@ -813,7 +815,7 @@ export const NuevoPlanView: React.FC<NuevoPlanViewProps> = ({ onVolver, onPlanCr
                   </button>
                   <button
                     type="button"
-                    onClick={handleProcesarTextoF1}
+                    onClick={() => { void handleProcesarTextoF1().catch(() => {}); }}
                     disabled={procesandoF1 || !textoManualF1.trim()}
                     className="px-4 py-1.5 rounded-lg bg-[#004F90] hover:bg-[#003B71] text-white text-xs font-bold shadow-xs disabled:opacity-50 cursor-pointer"
                   >
@@ -1081,7 +1083,8 @@ export const NuevoPlanView: React.FC<NuevoPlanViewProps> = ({ onVolver, onPlanCr
                 </button>
                 <button
                   type="button"
-                  onClick={handleGuardarPlanF1}
+                  onClick={() => { void handleGuardarPlanF1().catch(() => {}); }}
+                  disabled={cambiosPendientes > 0}
                   className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-[#004F90] hover:bg-[#003B71] text-white text-xs font-black shadow-md transition cursor-pointer"
                 >
                   <Check className="w-4 h-4" />
@@ -1391,8 +1394,8 @@ export const NuevoPlanView: React.FC<NuevoPlanViewProps> = ({ onVolver, onPlanCr
               </button>
               <button
                 type="button"
-                onClick={handleGuardarPlanF2}
-                disabled={!nombrePlanF2.trim()}
+                onClick={() => { void handleGuardarPlanF2().catch(() => {}); }}
+                disabled={!nombrePlanF2.trim() || cambiosPendientes > 0}
                 className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-[#004F90] hover:bg-[#003B71] text-white text-xs font-black shadow-md transition disabled:opacity-50"
               >
                 <Check className="w-4 h-4" />

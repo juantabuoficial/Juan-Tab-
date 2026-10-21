@@ -1,3 +1,4 @@
+import { fechaServidor } from '../utils/fechaServidor';
 import React, { useState } from 'react';
 import {
   History,
@@ -282,7 +283,7 @@ export const AuditoriaView: React.FC = () => {
                     <td className="py-3 px-4 font-mono text-[11px] text-[#727E8C] dark:text-slate-400">
                       <div className="flex items-center gap-1.5">
                         <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                        <span>{new Date(reg.fechaHora).toLocaleString('es-ES')}</span>
+                        <span>{new Date(fechaServidor(reg)).toLocaleString('es-ES')}</span>
                       </div>
                     </td>
                     <td className="py-3 px-4">

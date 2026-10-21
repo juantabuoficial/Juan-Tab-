@@ -1,3 +1,5 @@
+import { fechaServidor } from '../utils/fechaServidor';
+import { EstadoGuardado } from './EstadoGuardado';
 import React, { useState } from 'react';
 import {
   Shield,
@@ -51,6 +53,7 @@ export const AdminPanel: React.FC = () => {
     usuarios,
     actualizarUsuario,
     crearUsuario,
+    esperarGuardado,
     actuaciones,
     asignarTecnicoActuacion,
     registrosAuditoria,
@@ -78,6 +81,7 @@ export const AdminPanel: React.FC = () => {
   const [exportandoMasivo, setExportandoMasivo] = useState(false);
 
   // Formulario Nuevo Usuario
+  const [nuevoUid, setNuevoUid] = useState('');
   const [nuevoNombre, setNuevoNombre] = useState('');
   const [nuevoApellidos, setNuevoApellidos] = useState('');
   const [nuevoEmail, setNuevoEmail] = useState('');
@@ -100,7 +104,7 @@ export const AdminPanel: React.FC = () => {
     usuarios.find((u) => u.rol === 'tecnico')?.id || ''
   );
   const [comentarioTexto, setComentarioTexto] = useState('');
-  const [comentarioEnviarEmail, setComentarioEnviarEmail] = useState(true);
+  const [comentarioEnviarEmail, setComentarioEnviarEmail] = useState(false);
   const [mensajeEnvioExitoso, setMensajeEnvioExitoso] = useState<string | null>(null);
 
   // Auto-ajustar destinatario cuando cambia la actuación seleccionada
@@ -125,26 +129,25 @@ export const AdminPanel: React.FC = () => {
 
     const dest = usuarios.find((u) => u.id === comentarioDestinatarioId);
     setMensajeEnvioExitoso(
-      `Comentario registrado y recordatorio oficial enviado correctamente por email a ${
-        dest ? dest.email : 'el técnico'
-      }.`
+      'Comentario guardado en el servidor. El envío por correo no está configurado.'
     );
     setComentarioTexto('');
     setTimeout(() => setMensajeEnvioExitoso(null), 5000);
   };
 
-  const handleCrearUsuario = (e: React.FormEvent) => {
+  const handleCrearUsuario = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!nuevoNombre || !nuevoEmail) return;
 
     crearUsuario({
+      firebaseUid: nuevoUid,
       nombre: nuevoNombre,
       apellidos: nuevoApellidos,
       email: nuevoEmail,
       rol: nuevoRol,
       departamento: 'Área de Desarrollo Local',
       cargo: nuevoCargo,
-      biometriaHabilitada: true,
+      biometriaHabilitada: false,
       dosFactoresHabilitado: false,
       permisos: nuevosPermisos,
       activo: true,
@@ -152,16 +155,18 @@ export const AdminPanel: React.FC = () => {
       ultimoAcceso: new Date().toISOString()
     });
 
+    await esperarGuardado();
     setNuevoNombre('');
     setNuevoApellidos('');
     setNuevoEmail('');
     setMostrarModalNuevoUsuario(false);
   };
 
-  const handleGuardarPermisos = (e: React.FormEvent) => {
+  const handleGuardarPermisos = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!usuarioEditandoPermisos) return;
     actualizarUsuario(usuarioEditandoPermisos);
+    await esperarGuardado();
     setUsuarioEditandoPermisos(null);
   };
 
@@ -326,6 +331,7 @@ export const AdminPanel: React.FC = () => {
         </button>
 
         <button
+          disabled={usuarioActual?.rol !== 'administrador'}
           onClick={() => setPestanaAdmin('usuarios')}
           className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition whitespace-nowrap ${
             pestanaAdmin === 'usuarios'
@@ -714,7 +720,7 @@ export const AdminPanel: React.FC = () => {
                         {reg.usuarioNombre}
                       </span>
                       <span className="text-[10px] text-slate-400 font-mono">
-                        {new Date(reg.fechaHora).toLocaleTimeString('es-ES', {
+                        {new Date(fechaServidor(reg)).toLocaleTimeString('es-ES', {
                           hour: '2-digit',
                           minute: '2-digit'
                         })}
@@ -732,7 +738,7 @@ export const AdminPanel: React.FC = () => {
       )}
 
       {/* VISTA 2: GESTIÓN DE USUARIOS Y PERMISOS ESPECÍFICOS */}
-      {pestanaAdmin === 'usuarios' && (
+      {pestanaAdmin === 'usuarios' && usuarioActual?.rol === 'administrador' && (
         <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-3 border-b border-slate-100 dark:border-slate-800">
             <div>
@@ -938,7 +944,8 @@ export const AdminPanel: React.FC = () => {
               </div>
             )}
 
-            <form onSubmit={handleEnviarComentario} className="space-y-3 text-xs">
+            <form onSubmit={e => { void handleEnviarComentario(e).catch(() => {}); }} className="space-y-3 text-xs">
+<EstadoGuardado />
               <div>
                 <label className="block font-semibold mb-1 text-slate-700 dark:text-slate-300">
                   Seleccionar Actuación *
@@ -994,6 +1001,7 @@ export const AdminPanel: React.FC = () => {
                   type="checkbox"
                   id="enviarEmailCheck"
                   checked={comentarioEnviarEmail}
+                    disabled
                   onChange={(e) => setComentarioEnviarEmail(e.target.checked)}
                   className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4"
                 />
@@ -1066,7 +1074,7 @@ export const AdminPanel: React.FC = () => {
                     <div className="flex items-center justify-between text-[10px] pt-1">
                       <div className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400 font-semibold">
                         <Mail className="w-3.5 h-3.5" />
-                        <span>Correo enviado con éxito · Buzón @dipucadiz.es</span>
+                        <span>Comentario registrado · Correo pendiente de envío externo</span>
                       </div>
                       <span className="text-slate-400">
                         {com.leido ? 'Visto por el técnico' : 'Pendiente de lectura'}
@@ -1091,7 +1099,9 @@ export const AdminPanel: React.FC = () => {
               Área de Desarrollo Local · Diputación Provincial de Cádiz
             </p>
 
-            <form onSubmit={handleCrearUsuario} className="mt-4 space-y-3 text-xs">
+            <form onSubmit={e => { void handleCrearUsuario(e).catch(() => {}); }} className="mt-4 space-y-3 text-xs">
+<EstadoGuardado />
+<label className="block text-xs">Identificador de la cuenta existente en Firebase Authentication (UID)<input required value={nuevoUid} onChange={e=>setNuevoUid(e.target.value)} className="block w-full border rounded-lg p-2" /></label>
               <div>
                 <label className="block font-semibold mb-1 text-slate-700 dark:text-slate-300">
                   Nombre *
@@ -1200,7 +1210,8 @@ export const AdminPanel: React.FC = () => {
               </p>
             </div>
 
-            <form onSubmit={handleGuardarPermisos} className="space-y-3 text-xs">
+            <form onSubmit={e => { void handleGuardarPermisos(e).catch(() => {}); }} className="space-y-3 text-xs">
+<EstadoGuardado />
               <div className="space-y-2 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input

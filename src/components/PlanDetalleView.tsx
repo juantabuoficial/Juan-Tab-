@@ -1,3 +1,4 @@
+import { EstadoGuardado } from './EstadoGuardado';
 import React, { useState, useMemo } from 'react';
 import {
   ArrowLeft,
@@ -100,7 +101,7 @@ export const PlanDetalleView: React.FC<PlanDetalleViewProps> = ({
   onVolver,
   onAbrirActuacion
 }) => {
-  const {
+  const { guardarOperacion,
     actuaciones,
     editarActuacionDePlan,
     actualizarPlan,
@@ -250,29 +251,7 @@ export const PlanDetalleView: React.FC<PlanDetalleViewProps> = ({
     }));
   }, [actuaciones, planActual]);
 
-  // Si el plan no tiene aún guardadas sus actuaciones previstas en el objeto del plan, auto-sincronizarlas
-  React.useEffect(() => {
-    if (
-      (!planActual.actuacionesPrevistas || planActual.actuacionesPrevistas.length === 0) &&
-      listaActuacionesPlan.length > 0
-    ) {
-      const nuevasPrevistas: ActuacionEnPlan[] = listaActuacionesPlan.map((it) => ({
-        id: it.planActuacionId || it.id,
-        numero: it.numero,
-        entidadLocal: it.entidadLocal,
-        titulo: it.titulo,
-        aplicacionPresupuestaria: it.aplicacionPresupuestaria,
-        subvencionSolicitada: it.importe,
-        actuacionGeneradaId: it.dadaDeAlta ? it.id : undefined
-      }));
-      const eellUnicas = Array.from(new Set(listaActuacionesPlan.map((it) => it.entidadLocal)));
-      actualizarPlan({
-        ...planActual,
-        actuacionesPrevistas: nuevasPrevistas,
-        eellBeneficiarias: eellUnicas
-      });
-    }
-  }, [planActual.id, planActual.actuacionesPrevistas, listaActuacionesPlan.length]);
+
 
   // 2. Agrupación por EELL (Municipios y ELAs beneficiarios)
   // Numerada del 1 al N: si las actuaciones son 1.1 y 1.2 -> es el municipio 1; si son 2.1, 2.2 -> es el municipio 2...
@@ -422,7 +401,8 @@ export const PlanDetalleView: React.FC<PlanDetalleViewProps> = ({
   }, [listaActuacionesPlan]);
 
   // Dar de alta TODAS las actuaciones del plan en la base de datos de una sola vez
-  const handleDarDeAltaTodasLasActuaciones = () => {
+  const handleDarDeAltaTodasLasActuaciones = async () => {
+    const creadas = await guardarOperacion(() => {
     let creadas = 0;
     const nuevasPrevistas: ActuacionEnPlan[] = [];
 
@@ -488,6 +468,8 @@ export const PlanDetalleView: React.FC<PlanDetalleViewProps> = ({
       eellBeneficiarias: eellList
     });
 
+    return creadas;
+    });
     setMensajeExito(
       creadas > 0
         ? `Se han dado de alta ${creadas} actuaciones del ${planActual.nombre} correctamente.`
@@ -497,7 +479,7 @@ export const PlanDetalleView: React.FC<PlanDetalleViewProps> = ({
   };
 
   // Entrar a revisar la actuación (si es prevista y aún no existe en actuaciones, se da de alta automáticamente)
-  const handleRevisarActuacion = (actItem: ItemActuacion) => {
+  const handleRevisarActuacion = async (actItem: ItemActuacion) => {
     // 1. Buscar si ya existe la actuación en la base de datos por ID
     let actEncontrada = actuaciones.find((a) => a.id === actItem.id);
 
@@ -521,6 +503,7 @@ export const PlanDetalleView: React.FC<PlanDetalleViewProps> = ({
     // la creamos de inmediato con todos los documentos oficiales Base 14
     const eellNombreLimpio = formatearNombreEELL(actItem.entidadLocal || 'Diputación de Cádiz');
 
+    const nuevaAct = await guardarOperacion(() => {
     const nuevaAct = crearNuevaActuacion({
       numero: actItem.numero,
       plan: planActual.nombre,
@@ -551,6 +534,9 @@ export const PlanDetalleView: React.FC<PlanDetalleViewProps> = ({
       actualizarPlan(planActualizado);
     }
 
+    return nuevaAct;
+    });
+
     // Entrar directamente en la actuación recién creada
     onAbrirActuacion(nuevaAct.id);
   };
@@ -566,7 +552,7 @@ export const PlanDetalleView: React.FC<PlanDetalleViewProps> = ({
   };
 
   // Guardar cambios en la actuación
-  const handleGuardarModificacion = () => {
+  const handleGuardarModificacion = async () => {
     if (!actuacionEditando) return;
 
     const datosNuevos = {
@@ -577,14 +563,13 @@ export const PlanDetalleView: React.FC<PlanDetalleViewProps> = ({
       entidadLocal: formEditEELL || actuacionEditando.entidadLocal
     };
 
-    // Actualizar en el plan
-    if (actuacionEditando.planActuacionId) {
-      editarActuacionDePlan(planActual.id, actuacionEditando.planActuacionId, datosNuevos);
-    } else {
-      // Si no tenía ID previsto, buscar por id o número
-      editarActuacionDePlan(planActual.id, actuacionEditando.id, datosNuevos);
-    }
-
+    await guardarOperacion(() => {
+      if (actuacionEditando.planActuacionId) {
+        editarActuacionDePlan(planActual.id, actuacionEditando.planActuacionId, datosNuevos);
+      } else {
+        editarActuacionDePlan(planActual.id, actuacionEditando.id, datosNuevos);
+      }
+    });
     setActuacionEditando(null);
     setMensajeExito(`Actuación nº ${datosNuevos.numero} modificada correctamente.`);
     setTimeout(() => setMensajeExito(null), 4000);
@@ -600,6 +585,7 @@ export const PlanDetalleView: React.FC<PlanDetalleViewProps> = ({
 
   return (
     <div className="space-y-4 animate-in fade-in duration-150">
+      <EstadoGuardado />
       {/* Mensaje de éxito temporal */}
       {mensajeExito && (
         <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center justify-between font-bold shadow-2xs">
@@ -667,7 +653,7 @@ export const PlanDetalleView: React.FC<PlanDetalleViewProps> = ({
           {actuacionesPendientesAlta.length > 0 && (
             <button
               type="button"
-              onClick={handleDarDeAltaTodasLasActuaciones}
+              onClick={() => { void handleDarDeAltaTodasLasActuaciones().catch(() => {}); }}
               className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black shadow-2xs transition active:scale-[0.98]"
               title="Dar de alta todas las actuaciones previstas del plan en la base de datos de la app"
             >
@@ -943,7 +929,7 @@ export const PlanDetalleView: React.FC<PlanDetalleViewProps> = ({
                               <div className="min-w-0 flex-1">
                                 <div className="flex items-center gap-2 flex-wrap">
                                   <div
-                                    onClick={() => handleRevisarActuacion(act)}
+                                    onClick={() => { void handleRevisarActuacion(act).catch(() => {}); }}
                                     className="text-slate-900 font-bold text-xs sm:text-sm leading-snug cursor-pointer hover:text-[#004F90] transition"
                                     title="Entrar a revisar esta actuación"
                                   >
@@ -1010,7 +996,7 @@ export const PlanDetalleView: React.FC<PlanDetalleViewProps> = ({
                             {/* Botón Revisar (Revisión técnica Base 14 - permite entrar en la actuación) */}
                             <button
                               type="button"
-                              onClick={() => handleRevisarActuacion(act)}
+                              onClick={() => { void handleRevisarActuacion(act).catch(() => {}); }}
                               className="flex items-center gap-1 px-3.5 py-2 rounded-xl bg-[#004F90] hover:bg-[#003B71] text-white text-xs font-black shadow-2xs transition active:scale-[0.98]"
                               title="Entrar a la actuación y revisar sus documentos técnicos Base 14"
                             >
@@ -1145,7 +1131,7 @@ export const PlanDetalleView: React.FC<PlanDetalleViewProps> = ({
               </button>
               <button
                 type="button"
-                onClick={handleGuardarModificacion}
+                onClick={() => { void handleGuardarModificacion().catch(() => {}); }}
                 className="flex items-center gap-1.5 px-5 py-2 rounded-xl bg-[#004F90] hover:bg-[#003B71] text-white font-black shadow-xs transition"
               >
                 <Check className="w-4 h-4" />

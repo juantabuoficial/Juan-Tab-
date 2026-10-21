@@ -1,0 +1,18 @@
+{
+  "score": 3,
+  "summary": "Las reglas locales bloquean escalada de rol, suplantación, acceso privado ajeno y alteración de auditoría/avisos. 30 pruebas pasan. No se aprueba el despliegue hasta conciliar identidades y validar los objetos anidados contra datos existentes. La evaluación no se aplica a las reglas remotas aún no actualizadas.",
+  "findings": [
+    {
+      "check": "Type Safety / Storage Abuse",
+      "severity": "moderate",
+      "issue": "Las listas de documentos y actuaciones previstas, y determinados mapas heredados, limitan el tamaño pero no validan cada objeto interno. Un editor autorizado podría introducir contenido con tipos incompatibles con la interfaz.",
+      "recommendation": "Completar la validación de estructuras anidadas y ensayar contra una copia íntegra de los datos originales antes del despliegue."
+    },
+    {
+      "check": "Business Logic vs. Rules",
+      "severity": "major",
+      "issue": "La consulta remota de identidades existentes confirma cero perfiles autorizados. El acceso estricto rechazaría las cuentas de usuarios finales hasta su conciliación.",
+      "recommendation": "Identificar los UID y roles reales de Juan y administración; no dar un rol funcional a David; comprobar inicio de sesión y acceso desde dos sesiones antes de publicar."
+    }
+  ]
+}

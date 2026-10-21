@@ -1,3 +1,4 @@
+import { EstadoGuardado } from './EstadoGuardado';
 import React, { useState, useRef } from 'react';
 import {
   X,
@@ -45,7 +46,7 @@ export const ModalAltaActuacionesPlan: React.FC<ModalAltaActuacionesPlanProps> =
   onCerrar,
   onActuacionesCreadas
 }) => {
-  const {
+  const { guardarOperacion,
     actuaciones,
     crearNuevaActuacion,
     actualizarPlan
@@ -272,9 +273,10 @@ export const ModalAltaActuacionesPlan: React.FC<ModalAltaActuacionesPlanProps> =
   };
 
   // DAR DE ALTA DEFINITIVA EN LA APP
-  const handleConfirmarDarDeAlta = () => {
+  const handleConfirmarDarDeAlta = async () => {
     if (actuacionesExtraidas.length === 0) return;
 
+    const altasCreadas = await guardarOperacion(() => {
     let altasCreadas = 0;
     const nuevasPrevistas: ActuacionEnPlan[] = [...(plan.actuacionesPrevistas || [])];
 
@@ -352,6 +354,9 @@ export const ModalAltaActuacionesPlan: React.FC<ModalAltaActuacionesPlanProps> =
       presupuestoTotal: nuevoTotalPresupuesto > 0 ? nuevoTotalPresupuesto : plan.presupuestoTotal
     });
 
+    return altasCreadas;
+    });
+
     if (onActuacionesCreadas) {
       onActuacionesCreadas(altasCreadas);
     }
@@ -365,6 +370,7 @@ export const ModalAltaActuacionesPlan: React.FC<ModalAltaActuacionesPlanProps> =
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+      <EstadoGuardado />
       <div className="w-full max-w-5xl max-h-[92vh] flex flex-col rounded-2xl bg-white border border-slate-200 shadow-xl overflow-hidden">
         {/* =========================================================================
             CABECERA DEL MODAL
@@ -788,7 +794,7 @@ export const ModalAltaActuacionesPlan: React.FC<ModalAltaActuacionesPlanProps> =
             <button
               type="button"
               disabled={actuacionesExtraidas.length === 0 || procesando}
-              onClick={handleConfirmarDarDeAlta}
+              onClick={() => { void handleConfirmarDarDeAlta().catch(() => {}); }}
               className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black shadow-md transition active:scale-[0.98] ${
                 actuacionesExtraidas.length > 0 && !procesando
                   ? 'bg-[#004F90] hover:bg-[#003B71] text-white cursor-pointer'

@@ -4,8 +4,9 @@
  */
 
 import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
-import { getFirestore, Firestore, doc, getDocFromServer } from 'firebase/firestore';
-import { getAuth, Auth } from 'firebase/auth';
+import { connectFirestoreEmulator, getFirestore, Firestore, doc, getDocFromServer } from 'firebase/firestore';
+import { connectAuthEmulator, getAuth, Auth } from 'firebase/auth';
+import { FIREBASE_PUBLIC_CONFIG, FIRESTORE_DATABASE_ID } from './firebasePublicConfig';
 import { getStorage, FirebaseStorage } from 'firebase/storage';
 
 export interface FirebaseConnectionStatus {
@@ -18,12 +19,17 @@ export interface FirebaseConnectionStatus {
 // Variables de entorno o fallback para configuración
 const getFirebaseConfigObject = () => {
   // 1. Comprobar si hay variables de entorno inyectadas
-  const apiKey = import.meta.env.VITE_FIREBASE_API_KEY || '';
-  const projectId = import.meta.env.VITE_FIREBASE_PROJECT_ID || '';
-  const authDomain = import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || (projectId ? `${projectId}.firebaseapp.com` : '');
-  const storageBucket = import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || (projectId ? `${projectId}.appspot.com` : '');
-  const messagingSenderId = import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '';
-  const appId = import.meta.env.VITE_FIREBASE_APP_ID || '';
+  const env = import.meta.env ?? {};
+  if (env.DEV && env.VITE_PLANIFICA_EMULATORS === 'true') {
+    return { ...FIREBASE_PUBLIC_CONFIG, projectId: 'demo-planifica', apiKey: 'demo-only', authDomain: 'localhost', appId: 'demo-planifica', databaseId: FIRESTORE_DATABASE_ID };
+  }
+  const apiKey = env.VITE_FIREBASE_API_KEY || '';
+  const projectId = env.VITE_FIREBASE_PROJECT_ID || '';
+  const authDomain = env.VITE_FIREBASE_AUTH_DOMAIN || (projectId ? `${projectId}.firebaseapp.com` : '');
+  const storageBucket = env.VITE_FIREBASE_STORAGE_BUCKET || (projectId ? `${projectId}.appspot.com` : '');
+  const messagingSenderId = env.VITE_FIREBASE_MESSAGING_SENDER_ID || '';
+  const appId = env.VITE_FIREBASE_APP_ID || '';
+  const databaseId = env.VITE_FIREBASE_DATABASE_ID || '';
 
   if (apiKey && projectId) {
     return {
@@ -32,7 +38,8 @@ const getFirebaseConfigObject = () => {
       projectId,
       storageBucket,
       messagingSenderId,
-      appId
+      appId,
+      databaseId
     };
   }
 
@@ -47,9 +54,10 @@ const getFirebaseConfigObject = () => {
     }
   } catch {}
 
-  return null;
+  return { ...FIREBASE_PUBLIC_CONFIG, databaseId: FIRESTORE_DATABASE_ID };
 };
 
+let emulatorsConnected = false;
 let appInstance: FirebaseApp | null = null;
 let dbInstance: Firestore | null = null;
 let authInstance: Auth | null = null;
@@ -80,15 +88,21 @@ export function inicializarFirebase(): {
   }
 
   try {
-    if (!getApps().length) {
-      appInstance = initializeApp(config);
-    } else {
-      appInstance = getApp();
+    const databaseId = config.databaseId || '';
+    const emulatorMode = import.meta.env?.DEV && import.meta.env?.VITE_PLANIFICA_EMULATORS === 'true';
+    if ((!emulatorMode && config.projectId !== FIREBASE_PUBLIC_CONFIG.projectId) || databaseId !== FIRESTORE_DATABASE_ID) {
+      throw new Error('La configuración debe apuntar al proyecto y la base existentes de Juan. No se ha abierto otra base.');
     }
-
-    dbInstance = getFirestore(appInstance);
+    appInstance = getApps().find(app => app.options.projectId === config.projectId && app.options.appId === config.appId)
+      || initializeApp(config, 'planifica-shared');
+    dbInstance = getFirestore(appInstance, databaseId);
     authInstance = getAuth(appInstance);
     storageInstance = getStorage(appInstance);
+    if (emulatorMode && !emulatorsConnected) {
+      connectFirestoreEmulator(dbInstance, '127.0.0.1', 8085);
+      connectAuthEmulator(authInstance, 'http://127.0.0.1:9099', { disableWarnings: true });
+      emulatorsConnected = true;
+    }
 
     return {
       app: appInstance,
@@ -97,7 +111,8 @@ export function inicializarFirebase(): {
       storage: storageInstance,
       status: {
         configurada: true,
-        conectada: true,
+        // Inicializar el SDK no acredita conectividad. La sesión y las lecturas la verifican.
+        conectada: false,
         projectId: config.projectId,
         error: null
       }
@@ -125,7 +140,10 @@ export function inicializarFirebase(): {
 export async function validarConexionServidorFirestore(db: Firestore): Promise<boolean> {
   try {
     // getDocFromServer garantiza que no se responde desde caché local
-    await getDocFromServer(doc(db, '_sistema', 'ping'));
+    const uid = authInstance?.currentUser?.uid;
+    if (!uid) return false;
+    const profile = await getDocFromServer(doc(db, 'usuarios', uid));
+    if (!profile.exists() || profile.data().activo !== true) return false;
     return true;
   } catch (error: any) {
     // Si no existe el doc pero el servidor responde, la conexión es real
@@ -134,8 +152,8 @@ export async function validarConexionServidorFirestore(db: Firestore): Promise<b
       console.warn('[Firebase] Cliente en modo offline');
       return false;
     }
-    // Si da permiso denegado por reglas pero respondió el servidor, el servidor está online
-    if (error?.code === 'permission-denied') return true;
+    // permission-denied NO confirma acceso efectivo a la base de datos.
+    if (error?.code === 'permission-denied') return false;
     return false;
   }
 }
@@ -147,6 +165,7 @@ export function guardarConfiguracionFirebaseManual(config: {
   storageBucket?: string;
   messagingSenderId?: string;
   appId?: string;
+  databaseId?: string;
 }) {
   localStorage.setItem('adl_cadiz_firebase_custom_config', JSON.stringify(config));
   // Reiniciar instancias para que tomen la nueva configuración

@@ -1,203 +1,143 @@
 rules_version = '2';
+// Prototipo para revisión y pruebas: no desplegar automáticamente.
+// Modelos existentes: PlanSubvencion, Actuacion, User, ComentarioActuacion,
+// RegistroAuditoriaAcceso, NotificacionSistema, CopiaSeguridadPlan.
+// Todos los registros nuevos incluyen revisionSync (int), actualizadoPorUid
+// (UID inmutable respecto al autor del envío) y actualizadoEnServidor (timestamp).
+// directorioPersonal contiene solo identidad profesional, nunca email/teléfono/NIF.
+// configuracionesUsuario pertenece exclusivamente al UID de su documento.
 service cloud.firestore {
   match /databases/{database}/documents {
-
-    // =========================================================================
-    // 1. REGLA POR DEFECTO: DENEGACIÓN ABSOLUTA (ZERO-TRUST CATCH-ALL)
-    // =========================================================================
-    // Ningún documento es accesible a menos que una regla explícita lo autorice.
-    match /{document=**} {
-      allow read, write: if false;
+    function signed() { return request.auth != null; }
+    function profile() { return get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data; }
+    function active() { return signed() && profile().activo == true && profile().rol in ['administrador','jefe_servicio','tecnico','administrativo','auditor','consulta']; }
+    function admin() { return active() && profile().rol == 'administrador'; }
+    function manager() { return active() && profile().rol in ['administrador','jefe_servicio']; }
+    function editor() { return active() && profile().rol in ['administrador','jefe_servicio','tecnico','administrativo']; }
+    function validId(id) { return id is string && id.size()>0 && id.size()<=128 && id.matches('^[a-zA-Z0-9_-]+$'); }
+    function text(v,max) { return v is string && v.size()<=max; }
+    function optionalText(d,key,max) { return !(key in d) || text(d[key],max); }
+    function optionalMoney(d,key) { return !(key in d) || money(d[key]); }
+    function list(v,max) { return v is list && v.size()<=max; }
+    function money(v) { return v is number && v>=0 && v<=100000000000; }
+    function metadata(d,creating) {
+      return d.revisionSync is int && d.revisionSync>0 && d.actualizadoPorUid==request.auth.uid && d.actualizadoEnServidor==request.time &&
+        (creating ? d.revisionSync==1 : d.revisionSync==resource.data.get('revisionSync',0)+1);
     }
-
-    // =========================================================================
-    // FUNCIONES GLOBALES DE SEGURIDAD Y VALIDACIÓN DE ROLES
-    // =========================================================================
-
-    // Comprobar si la petición proviene de un usuario autenticado en Firebase Auth
-    function isSignedIn() {
-      return request.auth != null && request.auth.uid != null;
+    function sameCreated(d) { return d.fechaCreacion==resource.data.fechaCreacion; }
+    function validPlan(d,id) {
+      return d.keys().hasOnly(['id','codigo','nombre','descripcion','ejercicio','plazoEjecucionMaximo','plazoJustificacionMaximo','plazoEjecucionAmpliado','plazoJustificacionAmpliado','eellBeneficiarias','actuacionesPrevistas','presupuestoTotal','fechaCreacion','activo','revisionSync','actualizadoPorUid','actualizadoEnServidor']) &&
+        d.id==id && validId(id) && text(d.codigo,150) && text(d.nombre,500) && d.nombre.size()>0 && optionalText(d,'descripcion',20000) && d.ejercicio is int && d.ejercicio>=1900 && d.ejercicio<=2200 &&
+        money(d.presupuestoTotal) && d.activo is bool && text(d.fechaCreacion,40) && text(d.plazoEjecucionMaximo,40) && text(d.plazoJustificacionMaximo,40) && optionalText(d,'plazoEjecucionAmpliado',40) && optionalText(d,'plazoJustificacionAmpliado',40) &&
+        list(d.eellBeneficiarias,500) && list(d.actuacionesPrevistas,1000);
     }
-
-    function incoming() {
-      return request.resource.data;
+    function validAct(d,id) {
+      return d.keys().hasOnly(['id','numero','plan','entidadLocal','nifEntidad','titulo','aplicacionPresupuestaria','faseActual','plazos','importes','documentos','liquidacion','estadoGeneral','tecnicoAsignadoId','tecnicoAsignadoNombre','tecnicoAsignadoCargo','fechaCreacion','fechaModificacion','tecnicosParticipantes','observacionesInternas','revisionSync','actualizadoPorUid','actualizadoEnServidor']) &&
+        d.id==id && validId(id) && text(d.numero,150) && text(d.plan,500) && text(d.entidadLocal,500) && text(d.titulo,2000) && d.titulo.size()>0 && optionalText(d,'nifEntidad',30) && optionalText(d,'aplicacionPresupuestaria',150) && optionalText(d,'observacionesInternas',30000) && optionalText(d,'tecnicoAsignadoCargo',300) &&
+        text(d.tecnicoAsignadoId,128) && text(d.tecnicoAsignadoNombre,300) && d.plazos is map && d.plazos.keys().hasOnly(['plazoEjecucion','plazoJustificacion','plazoEjecucionAmpliado','plazoJustificacionAmpliado']) && text(d.plazos.plazoEjecucion,40) && text(d.plazos.plazoJustificacion,40) && optionalText(d.plazos,'plazoEjecucionAmpliado',40) && optionalText(d.plazos,'plazoJustificacionAmpliado',40) &&
+        d.importes is map && d.importes.keys().hasOnly(['importeActuacion','importeConcesion','importeAdjudicacion','aportacionMunicipal']) && money(d.importes.importeActuacion) && money(d.importes.importeConcesion) && money(d.importes.importeAdjudicacion) && optionalMoney(d.importes,'aportacionMunicipal') &&
+        d.liquidacion is map && d.liquidacion.keys().hasOnly(['adjudicacion','justificadoEnPlazo','justificadoEnPlazoConDeficiencias','justificadoFueraDePlazo','justificadoFueraDePlazoConDeficiencias','noJustificado','observacionesLiquidacion']) && money(d.liquidacion.adjudicacion) && money(d.liquidacion.justificadoEnPlazo) && money(d.liquidacion.justificadoEnPlazoConDeficiencias) && money(d.liquidacion.justificadoFueraDePlazo) && money(d.liquidacion.justificadoFueraDePlazoConDeficiencias) && money(d.liquidacion.noJustificado) && text(d.liquidacion.observacionesLiquidacion,30000) && list(d.documentos,250) &&
+        d.estadoGeneral in ['pendiente','en_revision','con_deficiencias','justificado','no_justificado','conforme'] && text(d.fechaCreacion,40) && text(d.fechaModificacion,40) &&
+        (!('faseActual' in d) || d.faseActual in ['solicitud','ejecucion','justificacion']) && (!('tecnicosParticipantes' in d)||list(d.tecnicosParticipantes,100));
     }
-
-    function existing() {
-      return resource.data;
+    function validUser(d,id) {
+      return d.keys().hasOnly(['id','nombre','apellidos','nif','email','rol','departamento','cargo','telefono','biometriaHabilitada','dosFactoresHabilitado','certificadoDispositivo','permisos','activo','fechaAlta','avatarUrl','ultimoAcceso','revisionSync','actualizadoPorUid','actualizadoEnServidor']) &&
+        d.id==id && validId(id) && text(d.nombre,150) && d.nombre.size()>0 && text(d.apellidos,200) && text(d.email,254) && d.email.matches('^[^@]+@[^@]+[.][^@]+$') &&
+        d.rol in ['administrador','jefe_servicio','tecnico','administrativo','auditor','consulta'] && d.activo is bool && text(d.departamento,300) && text(d.cargo,300) &&
+        optionalText(d,'nif',30) && optionalText(d,'telefono',50) && optionalText(d,'fechaAlta',40) && optionalText(d,'avatarUrl',2000) && optionalText(d,'ultimoAcceso',40) &&
+        d.biometriaHabilitada is bool && d.dosFactoresHabilitado is bool && (!('permisos' in d)|| (d.permisos is map && d.permisos.size()<=10)) && (!('certificadoDispositivo' in d)||(d.certificadoDispositivo is map && d.certificadoDispositivo.size()<=20));
     }
-
-    // Validación estricta de identificadores seguros (evita caracteres de inyección)
-    function isValidId(id) {
-      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    function validDirectory(d,id) {
+      return d.keys().hasOnly(['id','nombre','apellidos','cargo','departamento','rol','activo','revisionSync','actualizadoPorUid','actualizadoEnServidor']) &&
+        d.id==id && validId(id) && text(d.nombre,150) && text(d.apellidos,200) && text(d.cargo,300) && text(d.departamento,300) && d.activo is bool &&
+        d.rol in ['administrador','jefe_servicio','tecnico','administrativo','auditor','consulta'];
     }
-
-    // Obtener datos del perfil del usuario autenticado en Firestore (/usuarios/{uid})
-    function getUserData() {
-      return get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data;
+    function validComment(d,id) {
+      return d.keys().hasOnly(['id','actuacionId','actuacionNumero','actuacionTitulo','autorId','autorNombre','autorRol','destinatarioId','destinatarioNombre','destinatarioEmail','mensaje','fechaHora','enviadoPorEmail','leido','revisionSync','actualizadoPorUid','actualizadoEnServidor']) &&
+        d.id==id && validId(id) && validId(d.actuacionId) && validId(d.autorId) && validId(d.destinatarioId) && text(d.autorNombre,350) && text(d.destinatarioNombre,350) && text(d.destinatarioEmail,254) &&
+        text(d.actuacionNumero,150) && text(d.actuacionTitulo,2000) && text(d.mensaje,20000) && d.mensaje.size()>0 && text(d.fechaHora,40) && d.leido is bool && d.enviadoPorEmail==false &&
+        d.autorRol in ['administrador','jefe_servicio','tecnico','administrativo'];
     }
-
-    // Comprobar si el usuario existe en Firestore y su estado es activo
-    function isUserActive() {
-      return isSignedIn() && 
-             exists(/databases/$(database)/documents/usuarios/$(request.auth.uid)) && 
-             getUserData().activo == true;
+    function validAudit(d,id) {
+      return d.keys().hasOnly(['id','fechaHora','usuarioId','usuarioNombre','rol','actuacionId','documentoId','documentoTitulo','accion','detalles','dispositivo','ip','revisionSync','actualizadoPorUid','actualizadoEnServidor']) &&
+        d.id==id && validId(id) && d.usuarioId==request.auth.uid && d.usuarioNombre==profile().nombre+' '+profile().get('apellidos','') && text(d.usuarioNombre,350) && d.rol==profile().rol && text(d.fechaHora,40) && text(d.actuacionId,128) && text(d.documentoId,128) && text(d.documentoTitulo,2000) &&
+        d.accion in ['acceso_pestana','modificacion_checklist','calificacion_estado','exportacion_pdf'] && optionalText(d,'detalles',20000) && optionalText(d,'dispositivo',1000) && optionalText(d,'ip',100);
     }
-
-    // Obtener el rol del usuario autenticado activo
-    function userRole() {
-      return getUserData().rol;
+    function validNotification(d,id) {
+      return d.keys().hasOnly(['id','titulo','mensaje','tipo','fechaHora','leida','actuacionId','revisionSync','actualizadoPorUid','actualizadoEnServidor']) && d.id==id && validId(id) &&
+        text(d.titulo,500) && text(d.mensaje,2000) && d.tipo in ['alerta','vencimiento','info','exito'] && text(d.fechaHora,40) && d.leida is bool && optionalText(d,'actuacionId',128);
     }
-
-    // ROL ADMINISTRADOR EXCLUSIVO
-    // Autorizado para operaciones administrativas críticas: alta de planes y borrado de cualquier registro
-    function isAdmin() {
-      return isUserActive() && userRole() == 'administrador';
+    function validTrash(d,id) {
+      return d.keys().hasOnly(['idCopia','fechaBorrado','fechaExpiracion','diasRetencion','borradoPorUsuario','plan','actuacionesAsociadas','motivo','revisionSync','actualizadoPorUid','actualizadoEnServidor']) && d.idCopia==id && validId(id) &&
+        text(d.fechaBorrado,40) && text(d.fechaExpiracion,40) && d.diasRetencion is int && d.diasRetencion>=1 && d.diasRetencion<=3650 && text(d.borradoPorUsuario,350) &&
+        d.plan is map && d.plan.size()<=30 && list(d.actuacionesAsociadas,100) && optionalText(d,'motivo',2000);
     }
-
-    // Rol Jefe de Servicio (supervisión técnica y de planes, sin facultades exclusivas de administración)
-    function isJefeServicio() {
-      return isUserActive() && userRole() == 'jefe_servicio';
+    function validSettings(d,id) {
+      return d.keys().hasOnly(['id','notificacionesLeidas','notificacionesPush','recordatoriosEmailDiarios','alertasVencimientoDias','sincronizacionNubeAutomatica','cifradoExtremoAExtremo','modoOscuro','autenticacionBiometrica','autenticacion2FA','revisionSync','actualizadoPorUid','actualizadoEnServidor']) && d.id==id && validId(id) &&
+        (!('notificacionesLeidas' in d) || list(d.notificacionesLeidas,5000)) && d.notificacionesPush is bool && d.recordatoriosEmailDiarios is bool && d.alertasVencimientoDias is int && d.alertasVencimientoDias>=0 && d.alertasVencimientoDias<=365 &&
+        d.sincronizacionNubeAutomatica is bool && d.cifradoExtremoAExtremo is bool && d.modoOscuro in ['auto','dark','light'] && d.autenticacionBiometrica is bool && d.autenticacion2FA is bool;
     }
-
-    // Personal técnico o administrativo con capacidad de tramitación de expedientes y actuaciones
-    function isTecnicoOAdministrativo() {
-      return isUserActive() && (userRole() in ['tecnico', 'administrativo', 'jefe_servicio', 'administrador']);
+    match /planes/{id} {
+      allow read: if active();
+      allow create: if admin() && validPlan(request.resource.data,id) && metadata(request.resource.data,true);
+      allow update: if manager() && validPlan(request.resource.data,id) && sameCreated(request.resource.data) && metadata(request.resource.data,false);
+      allow delete: if admin();
     }
-
-    // Personal autorizado general (incluye perfiles de consulta y auditoría)
-    function isPersonalAutorizado() {
-      return isUserActive() && (userRole() in ['consulta', 'auditor', 'administrativo', 'tecnico', 'jefe_servicio', 'administrador']);
+    match /actuaciones/{id} {
+      allow read: if active();
+      allow create: if editor() && validAct(request.resource.data,id) && metadata(request.resource.data,true);
+      allow update: if editor() && validAct(request.resource.data,id) && sameCreated(request.resource.data) && metadata(request.resource.data,false) &&
+        (manager() || !request.resource.data.diff(resource.data).affectedKeys().hasAny(['tecnicoAsignadoId','tecnicoAsignadoNombre','tecnicoAsignadoCargo']));
+      allow delete: if admin();
     }
-
-    // =========================================================================
-    // 2. COLECCIÓN DE PLANES DE SUBVENCIONES (/planes/{planId})
-    // =========================================================================
-    match /planes/{planId} {
-      // LECTURA: Solo usuarios autenticados y activos del personal (incluyendo 'consulta' y 'auditor').
-      // No se permite lectura pública sin autenticación previa.
-      allow read: if isPersonalAutorizado();
-
-      // ALTA DE PLANES: Exclusivamente para usuarios con rol 'administrador'
-      allow create: if isAdmin() && isValidId(planId);
-
-      // MODIFICACIÓN DE PLANES: Exclusivamente Administrador o Jefe de Servicio
-      allow update: if (isAdmin() || isJefeServicio()) && isValidId(planId);
-
-      // BORRADO DE PLANES: Exclusivamente para usuarios con rol 'administrador'
-      allow delete: if isAdmin() && isValidId(planId);
+    match /usuarios/{id} {
+      // Datos personales privados: propietario y administración autorizada de personal.
+      allow read: if signed() && (request.auth.uid==id || admin());
+      allow create: if admin() && validUser(request.resource.data,id) && metadata(request.resource.data,true);
+      allow update: if admin() && validUser(request.resource.data,id) && metadata(request.resource.data,false);
+      allow delete: if admin() && request.auth.uid!=id;
     }
-
-    // =========================================================================
-    // 3. COLECCIÓN DE ACTUACIONES Y EXPEDIENTES (/actuaciones/{actuacionId})
-    // =========================================================================
-    match /actuaciones/{actuacionId} {
-      // LECTURA: Solo usuarios debidamente autenticados y activos.
-      // El personal con rol 'consulta' puede consultar todas las actuaciones pero no modificarlas.
-      allow read: if isPersonalAutorizado();
-
-      // ALTA DE ACTUACIONES: Personal técnico o administrativo autorizado, Jefe de Servicio o Administrador
-      allow create: if isTecnicoOAdministrativo() && isValidId(actuacionId);
-
-      // MODIFICACIÓN DE ACTUACIONES: Técnicos y administrativos encargados de la tramitación
-      allow update: if isTecnicoOAdministrativo() && isValidId(actuacionId);
-
-      // BORRADO DE ACTUACIONES: Operación administrativa crítica, EXCLUSIVAMENTE rol 'administrador'
-      allow delete: if isAdmin() && isValidId(actuacionId);
+    match /directorioPersonal/{id} {
+      allow read: if active();
+      allow create: if admin() && validDirectory(request.resource.data,id) && metadata(request.resource.data,true);
+      allow update: if admin() && validDirectory(request.resource.data,id) && metadata(request.resource.data,false);
+      allow delete: if admin();
     }
-
-    // =========================================================================
-    // 4. COLECCIÓN DE USUARIOS (/usuarios/{usuarioId})
-    // =========================================================================
-    match /usuarios/{usuarioId} {
-      // LECTURA: Personal autenticado con perfil activo, o el propio usuario autenticado consultando su perfil
-      allow read: if isPersonalAutorizado() || (isSignedIn() && request.auth.uid == usuarioId);
-
-      // ALTA DE USUARIOS: Creación de perfil inicial por el propio usuario autenticado (primer acceso)
-      // o creación manual de cuentas por el Administrador.
-      allow create: if isSignedIn() && (
-        (request.auth.uid == usuarioId) ||
-        (isAdmin() && isValidId(usuarioId))
-      );
-
-      // MODIFICACIÓN:
-      // - El usuario puede actualizar únicamente su fecha de 'ultimoAcceso'.
-      // - El Administrador puede actualizar roles, estados y datos completos de cualquier usuario.
-      allow update: if isAdmin() || (
-        isSignedIn() && request.auth.uid == usuarioId &&
-        incoming().diff(existing()).affectedKeys().hasOnly(['ultimoAcceso'])
-      );
-
-      // BORRADO DE USUARIOS: Operación administrativa crítica, EXCLUSIVAMENTE rol 'administrador'
-      allow delete: if isAdmin() && isValidId(usuarioId);
+    match /comentarios/{id} {
+      allow read: if active() && (manager() || resource==null || resource.data.autorId==request.auth.uid || resource.data.destinatarioId==request.auth.uid);
+      allow create: if editor() && validComment(request.resource.data,id) && request.resource.data.autorId==request.auth.uid && request.resource.data.autorRol==profile().rol && request.resource.data.autorNombre==profile().nombre+' '+profile().get('apellidos','') && metadata(request.resource.data,true);
+      allow update: if editor() && validComment(request.resource.data,id) && metadata(request.resource.data,false) &&
+        (admin() || (resource.data.destinatarioId==request.auth.uid && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['leido','revisionSync','actualizadoPorUid','actualizadoEnServidor'])));
+      allow delete: if admin();
     }
-
-    // =========================================================================
-    // 5. REGISTROS DE AUDITORÍA INMUTABLES (/auditoria/{registroId} y /registrosAuditoria/{registroId})
-    // =========================================================================
-    match /auditoria/{registroId} {
-      // LECTURA: Exclusiva para auditores de control, administradores y jefes de servicio
-      allow read: if isPersonalAutorizado() && (userRole() in ['auditor', 'administrador', 'jefe_servicio']);
-
-      // ALTA: Cualquier usuario autenticado puede generar un registro de auditoría con su UID verificado
-      allow create: if isSignedIn() && isValidId(registroId) &&
-                       incoming().usuarioId == request.auth.uid;
-
-      // INMUTABILIDAD ADMINISTRATIVA: Ningún usuario (ni siquiera el Administrador) puede alterar o borrar auditorías
-      allow update, delete: if false;
+    match /auditoria/{id} {
+      allow read: if active() && (manager() || profile().rol=='auditor' || resource==null || resource.data.usuarioId==request.auth.uid);
+      allow create: if active() && validAudit(request.resource.data,id) && metadata(request.resource.data,true);
+      allow update,delete: if false;
     }
-
-    match /registrosAuditoria/{registroId} {
-      allow read: if isPersonalAutorizado() && (userRole() in ['auditor', 'administrador', 'jefe_servicio']);
-      allow create: if isSignedIn() && isValidId(registroId) &&
-                       incoming().usuarioId == request.auth.uid;
-      allow update, delete: if false;
+    match /registrosAuditoria/{id} {
+      allow read: if active() && (manager() || profile().rol=='auditor' || resource.data.usuarioId==request.auth.uid);
+      allow write: if false;
     }
-
-    // =========================================================================
-    // 6. COMENTARIOS E INSTRUCCIONES TÉCNICAS (/comentarios/{comentarioId})
-    // =========================================================================
-    match /comentarios/{comentarioId} {
-      // LECTURA: Usuarios técnicos relacionados con el mensaje, o Administrador/Jefe
-      allow read: if isPersonalAutorizado() && (
-        isAdmin() ||
-        isJefeServicio() ||
-        resource.data.autorId == request.auth.uid ||
-        resource.data.destinatarioId == request.auth.uid
-      );
-
-      // CREACIÓN: Personal técnico o administrativo autor
-      allow create: if isTecnicoOAdministrativo() && isValidId(comentarioId) &&
-                       incoming().autorId == request.auth.uid;
-
-      // ACTUALIZACIÓN: Marcar como leído o editar por Administrador
-      allow update: if isTecnicoOAdministrativo() && (
-        (resource.data.destinatarioId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['leido'])) ||
-        isAdmin()
-      );
-
-      // BORRADO: Operación administrativa reservada exclusivamente a rol 'administrador'
-      allow delete: if isAdmin();
-    }
-
-    // =========================================================================
-    // 7. NOTIFICACIONES DEL SISTEMA (/notificaciones/{notificacionId})
-    // =========================================================================
-    match /notificaciones/{notificacionId} {
-      allow read: if isPersonalAutorizado();
-      allow create: if isTecnicoOAdministrativo();
-      allow update: if isPersonalAutorizado() && incoming().diff(existing()).affectedKeys().hasOnly(['leida']);
-      // BORRADO: Operación administrativa reservada exclusivamente a rol 'administrador'
-      allow delete: if isAdmin();
-    }
-
-    // =========================================================================
-    // 8. PAPELERA DE RECICLAJE LEGAL (/papeleraPlanes/{copiaId})
-    // =========================================================================
-    match /papeleraPlanes/{copiaId} {
-      // Custodia y vaciado de papelera: Exclusivo del Administrador
-      allow read, create, delete: if isAdmin() && isValidId(copiaId);
+    match /notificaciones/{id} {
+      allow read: if active();
+      allow create: if editor() && validNotification(request.resource.data,id) && metadata(request.resource.data,true);
+      // El estado de lectura pertenece a configuracionesUsuario/{uid}; el aviso compartido es inmutable.
       allow update: if false;
+      allow delete: if admin();
     }
+    match /papeleraPlanes/{id} {
+      allow read: if admin();
+      allow create: if admin() && validTrash(request.resource.data,id) && metadata(request.resource.data,true);
+      allow update: if false;
+      allow delete: if admin();
+    }
+    match /configuracionesUsuario/{id} {
+      allow read: if active() && request.auth.uid==id;
+      allow create: if active() && request.auth.uid==id && validSettings(request.resource.data,id) && metadata(request.resource.data,true);
+      allow update: if active() && request.auth.uid==id && validSettings(request.resource.data,id) && metadata(request.resource.data,false);
+      allow delete: if false;
+    }
+    match /{document=**} { allow read,write: if false; }
   }
 }

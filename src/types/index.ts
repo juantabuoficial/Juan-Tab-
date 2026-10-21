@@ -1,3 +1,9 @@
+export interface MetadataSincronizacion {
+  revisionSync?: number;
+  actualizadoPorUid?: string;
+  actualizadoEnServidor?: { seconds: number; nanoseconds: number };
+}
+
 /**
  * Tipos de datos para ADL (versión 1.1) - Diputación de Cádiz
  * Área de Desarrollo Local
@@ -41,7 +47,7 @@ export interface FirmaElectronicaInforme {
   metodoFirma: 'autofirma_dispositivo' | 'almacen_certificados_dispositivo' | 'archivo_p12';
 }
 
-export interface User {
+export interface User extends MetadataSincronizacion {
   id: string;
   nombre: string;
   apellidos: string;
@@ -89,7 +95,7 @@ export interface CampoRevisar {
   requerido: boolean;
 }
 
-export interface RegistroAuditoriaAcceso {
+export interface RegistroAuditoriaAcceso extends MetadataSincronizacion {
   id: string;
   fechaHora: string; // ISO 8601
   usuarioId: string;
@@ -223,7 +229,7 @@ export interface CuadroLiquidacion {
   observacionesLiquidacion: string;
 }
 
-export interface Actuacion {
+export interface Actuacion extends MetadataSincronizacion {
   id: string;
   numero: string; // ej: "01", "02", "14"
   plan: string; // Plan / Programa / Convenio
@@ -261,7 +267,7 @@ export interface FiltrosBusqueda {
   tecnico?: string;
 }
 
-export interface NotificacionSistema {
+export interface NotificacionSistema extends MetadataSincronizacion {
   id: string;
   titulo: string;
   mensaje: string;
@@ -272,6 +278,7 @@ export interface NotificacionSistema {
 }
 
 export interface ConfiguracionUsuario {
+  notificacionesLeidas?: string[];
   notificacionesPush: boolean;
   recordatoriosEmailDiarios: boolean;
   alertasVencimientoDias: number; // e.g. 30 días
@@ -282,7 +289,7 @@ export interface ConfiguracionUsuario {
   autenticacion2FA: boolean;
 }
 
-export interface ComentarioActuacion {
+export interface ComentarioActuacion extends MetadataSincronizacion {
   id: string;
   actuacionId: string;
   actuacionNumero: string;
@@ -312,7 +319,7 @@ export interface ActuacionEnPlan {
   plazoJustificacion?: string;
 }
 
-export interface PlanSubvencion {
+export interface PlanSubvencion extends MetadataSincronizacion {
   id: string;
   codigo: string; // ej: "PCM-2026", "PPCOS-24-28"
   nombre: string; // ej: "Plan Cádiz Marcha + 2026"
@@ -329,7 +336,7 @@ export interface PlanSubvencion {
   activo: boolean;
 }
 
-export interface CopiaSeguridadPlan {
+export interface CopiaSeguridadPlan extends MetadataSincronizacion {
   idCopia: string;
   fechaBorrado: string;
   fechaExpiracion: string;
