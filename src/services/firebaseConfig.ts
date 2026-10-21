@@ -24,6 +24,7 @@ const getFirebaseConfigObject = () => {
   const storageBucket = import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || (projectId ? `${projectId}.appspot.com` : '');
   const messagingSenderId = import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '';
   const appId = import.meta.env.VITE_FIREBASE_APP_ID || '';
+  const databaseId = import.meta.env.VITE_FIREBASE_DATABASE_ID || '';
 
   if (apiKey && projectId) {
     return {
@@ -32,7 +33,8 @@ const getFirebaseConfigObject = () => {
       projectId,
       storageBucket,
       messagingSenderId,
-      appId
+      appId,
+      databaseId
     };
   }
 
@@ -86,7 +88,13 @@ export function inicializarFirebase(): {
       appInstance = getApp();
     }
 
-    dbInstance = getFirestore(appInstance);
+    // La base de datos de AI Studio NO es (default): seleccionar su ID explícito.
+    // Si falta, no iniciar Firestore contra una base distinta por accidente.
+    const databaseId = config.databaseId || '';
+    if (!databaseId) {
+      throw new Error('Falta VITE_FIREBASE_DATABASE_ID: no se utilizará la base (default) automáticamente.');
+    }
+    dbInstance = getFirestore(appInstance, databaseId);
     authInstance = getAuth(appInstance);
     storageInstance = getStorage(appInstance);
 
@@ -97,7 +105,8 @@ export function inicializarFirebase(): {
       storage: storageInstance,
       status: {
         configurada: true,
-        conectada: true,
+        // Inicializar SDK no acredita conectividad ni permisos de Firestore.
+        conectada: false,
         projectId: config.projectId,
         error: null
       }
@@ -134,8 +143,8 @@ export async function validarConexionServidorFirestore(db: Firestore): Promise<b
       console.warn('[Firebase] Cliente en modo offline');
       return false;
     }
-    // Si da permiso denegado por reglas pero respondió el servidor, el servidor está online
-    if (error?.code === 'permission-denied') return true;
+    // permission-denied NO confirma acceso efectivo a la base de datos.
+    if (error?.code === 'permission-denied') return false;
     return false;
   }
 }
@@ -147,6 +156,7 @@ export function guardarConfiguracionFirebaseManual(config: {
   storageBucket?: string;
   messagingSenderId?: string;
   appId?: string;
+  databaseId?: string;
 }) {
   localStorage.setItem('adl_cadiz_firebase_custom_config', JSON.stringify(config));
   // Reiniciar instancias para que tomen la nueva configuración
