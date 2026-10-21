@@ -33,6 +33,7 @@ export async function suscribirDatosCompartidos(
   let cerrada = false;
   let unsubscribePlanes: Unsubscribe = () => {};
   let unsubscribeActuaciones: Unsubscribe = () => {};
+  let cancelarAuth: Unsubscribe = () => {};
   let planes: PlanSubvencion[] | null = null;
   let actuaciones: Actuacion[] | null = null;
 
@@ -41,6 +42,7 @@ export async function suscribirDatosCompartidos(
     cerrada = true;
     unsubscribePlanes();
     unsubscribeActuaciones();
+    cancelarAuth();
   };
   const fallo = (error: Error) => { cerrar(); onError(error); };
   const emitir = () => {
@@ -55,10 +57,10 @@ export async function suscribirDatosCompartidos(
   };
 
   // Se mantiene en memoria y no se envía automáticamente a ninguna colección.
-  const cancelarAuth = auth.onAuthStateChanged(usuario => {
+  cancelarAuth = auth.onAuthStateChanged(usuario => {
     if (usuario?.uid !== acceso.uid) fallo(new Error('Sesión cerrada o cambiada.'));
   });
-  const cerrarConAuth = () => { cerrar(); cancelarAuth(); };
+  const cerrarConAuth = cerrar;
   // Instalar callbacks separados: nunca representar carga parcial como sincronización completa.
   try {
     unsubscribePlanes = onSnapshot(
